@@ -13,6 +13,12 @@ typedef struct {
     uint8_t modo;               // Modo (0-7)
     uint8_t joystick;           // Joystick (0-7)
     uint32_t timestamp;         // Timestamp
+    // Quaternion del TAG (BNO080)
+    float quatI;
+    float quatJ;
+    float quatK;
+    float quatReal;
+    uint8_t quatAccuracy;       // 0..3
 } __attribute__((packed)) EspNowData;
 
 // Variables globales para datos recibidos del TAG
@@ -32,8 +38,8 @@ void onDataReceived(const uint8_t * mac, const uint8_t *incomingData, int len) {
         // Solo mostrar cada 40 paquetes para no saturar consola (cada 2 segundos)
         if (totalPacketsReceived % 40 == 0) {
             float voltage = receivedData.batteryVoltage_mV / 1000.0;
-            Serial.printf("[ESP-NOW] Recibido #%lu: Batería=%.2fV, Modo=%d, Joystick=%d\n", 
-                          totalPacketsReceived, voltage, receivedData.modo, receivedData.joystick);
+            Serial.printf("[ESP-NOW] Recibido #%lu: Batería=%.2fV, Modo=%d, Joystick=%d, QuatAcc=%d\n", 
+                          totalPacketsReceived, voltage, receivedData.modo, receivedData.joystick, receivedData.quatAccuracy);
         }
     } else {
         Serial.printf("[ESP-NOW] Tamaño de datos incorrecto: %d bytes (esperado %d)\n", len, sizeof(EspNowData));
@@ -175,24 +181,32 @@ void loop() {
     if (currentCount > lastMeasurementCount) {
         // Hay nuevas mediciones a 20Hz, enviar a RPi con datos del TAG
         
-        // Verificar si tenemos datos válidos del TAG (menos de 1 segundo de antigüedad)
+    // Verificar si tenemos datos válidos del TAG (menos de 1 segundo de antigüedad)
         bool tagDataValid = (millis() - lastDataReceived) < 1000;
         float tagBatteryVoltage = tagDataValid ? (receivedData.batteryVoltage_mV / 1000.0) : 0.0;
         uint8_t tagModo = tagDataValid ? receivedData.modo : 0;
         uint8_t tagJoystick = tagDataValid ? receivedData.joystick : 0;
+    // Quaternion
+    float tagQuatI = tagDataValid ? receivedData.quatI : 0.0f;
+    float tagQuatJ = tagDataValid ? receivedData.quatJ : 0.0f;
+    float tagQuatK = tagDataValid ? receivedData.quatK : 0.0f;
+    float tagQuatReal = tagDataValid ? receivedData.quatReal : 1.0f;
+    uint8_t tagQuatAcc = tagDataValid ? receivedData.quatAccuracy : 0;
         
         // Enviar datos extendidos que incluyen información del TAG
         RPiComm_sendRawUWBDataWithTAG(distances, anchor_status, 20.0, currentCount,
-                                      tagBatteryVoltage, tagModo, tagJoystick, tagDataValid);
+                      tagBatteryVoltage, tagModo, tagJoystick,
+                      tagQuatI, tagQuatJ, tagQuatK, tagQuatReal, tagQuatAcc,
+                      tagDataValid);
         
         lastMeasurementCount = currentCount;
         
         // Mostrar información ocasionalmente
         static int send_count = 0;
         if (++send_count % 40 == 0) { // Cada 2 segundos
-            Serial.printf("[20Hz] Enviando: UWB[%.1f,%.1f,%.1f] TAG[%.2fV,%d,%d] Valid:%s\n", 
+            Serial.printf("[20Hz] Enviando: UWB[%.1f,%.1f,%.1f] TAG[%.2fV,%d,%d, qAcc=%d] Valid:%s\n", 
                          distances[0], distances[1], distances[2],
-                         tagBatteryVoltage, tagModo, tagJoystick,
+                         tagBatteryVoltage, tagModo, tagJoystick, tagQuatAcc,
                          tagDataValid ? "SI" : "NO");
         }
     }

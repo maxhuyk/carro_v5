@@ -49,8 +49,9 @@ void RPiComm_setup() {
 void RPiComm_sendRawUWBDataWithTAG(float distances[3], bool anchor_status[3], 
                            float frequency, unsigned long count,
                            float tag_battery_voltage, uint8_t tag_modo, uint8_t tag_joystick,
+                           float tag_q_i, float tag_q_j, float tag_q_k, float tag_q_real, uint8_t tag_q_acc,
                            bool tag_data_valid) {
-    // NUEVO FORMATO EXTENDIDO: Lista [d1,d2,d3,voltaje_bateria_carro,corriente_ML,corriente_MR,voltaje_bateria_tag,modo_tag,joystick_tag]
+    // NUEVO FORMATO EXTENDIDO: Lista [d1,d2,d3,voltaje_bateria_carro,corriente_ML,corriente_MR,voltaje_bateria_tag,modo_tag,joystick_tag, q_i, q_j, q_k, q_r, q_acc]
     // Valores NaN/inválidos se envían como -1
     
     // Leer sensores del carro
@@ -116,6 +117,26 @@ void RPiComm_sendRawUWBDataWithTAG(float distances[3], bool anchor_status[3],
     if (tag_data_valid) {
         RPiSerial.print(tag_joystick);
     } else {
+        RPiSerial.print(-1);
+    }
+    RPiSerial.print(",");
+
+    // Quaternion del TAG
+    if (tag_data_valid) {
+        RPiSerial.print(tag_q_i, 6);
+        RPiSerial.print(",");
+        RPiSerial.print(tag_q_j, 6);
+        RPiSerial.print(",");
+        RPiSerial.print(tag_q_k, 6);
+        RPiSerial.print(",");
+        RPiSerial.print(tag_q_real, 6);
+        RPiSerial.print(",");
+        RPiSerial.print(tag_q_acc);
+    } else {
+        RPiSerial.print(-1); RPiSerial.print(",");
+        RPiSerial.print(-1); RPiSerial.print(",");
+        RPiSerial.print(-1); RPiSerial.print(",");
+        RPiSerial.print(-1); RPiSerial.print(",");
         RPiSerial.print(-1);
     }
     

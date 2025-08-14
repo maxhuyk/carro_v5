@@ -40,11 +40,85 @@ import numpy as np
 import time
 
 
+def quat_to_pitch_roll(qi, qj, qk, qr):
+    """Retorna (pitch, roll) en grados a partir de un cuaternión (convención Tait-Bryan)."""
+    # roll (x-axis)
+    sinr_cosp = 2.0 * (qr * qi + qj * qk)
+    cosr_cosp = 1.0 - 2.0 * (qi * qi + qj * qj)
+    roll = np.degrees(np.arctan2(sinr_cosp, cosr_cosp))
+    # pitch (y-axis)
+    sinp = 2.0 * (qr * qj - qk * qi)
+    pitch = np.degrees(np.arcsin(np.clip(sinp, -1.0, 1.0)))
+    return float(pitch), float(roll)
+
+def quat_normalize(qi, qj, qk, qr):
+    n = np.sqrt(qi*qi + qj*qj + qk*qk + qr*qr)
+    if n == 0:
+        return 0.0, 0.0, 0.0, 1.0
+    return qi/n, qj/n, qk/n, qr/n
+
+def quat_conjugate(q):
+    qi, qj, qk, qr = q
+    return (-qi, -qj, -qk, qr)
+
+def quat_multiply(q1, q2):
+    x1, y1, z1, w1 = q1
+    x2, y2, z2, w2 = q2
+    # Hamilton product (w + xi + yj + zk)
+    w = w1*w2 - x1*x2 - y1*y2 - z1*z2
+    x = w1*x2 + x1*w2 + y1*z2 - z1*y2
+    y = w1*y2 - x1*z2 + y1*w2 + z1*x2
+    z = w1*z2 + x1*y2 - y1*x2 + z1*w2
+    return (x, y, z, w)
+
+# Flags de orientación: aplicar rotaciones de 180° sobre ejes del TAG
+# Ajusta signos de pitch/roll para coincidir con el montaje físico
+# Nota:
+#  - Z_180 invierte ambos (pitch y roll)
+#  - X_180 invierte solo pitch
+#  - Y_180 invierte solo roll
+ORIENT_Z_180 = False  # Invertido en eje Z 180° (ambos ejes se invierten)
+ORIENT_X_180 = False  # Invertido 180° adicional (si el frente está 180° al revés)
+ORIENT_Y_180 = False  # Usualmente no necesario; habilitar si se detecta inversión en Y
+
+def ajustar_orientacion_tilt(pitch_deg: float, roll_deg: float):
+    """Aplica correcciones de orientación de 180° a (pitch, roll)."""
+    p, r = pitch_deg, roll_deg
+    if ORIENT_Z_180:
+        p, r = -p, -r
+    if ORIENT_X_180:
+        p = -p
+    if ORIENT_Y_180:
+        r = -r
+    return p, r
+
+def tilt_to_pwm(pitch_deg, roll_deg, dead=7.5, max_tilt=25.0, max_pwm=255):
+    """Mapea inclinación directamente a PWM -255..255 para cada motor."""
+    def norm(v):
+        if abs(v) <= dead:
+            return 0.0
+        return float(np.clip(v / max_tilt, -1.0, 1.0))
+    F = norm(pitch_deg)   # +: adelante, -: atrás
+    T = norm(roll_deg)    # +: derecha, -: izquierda
+    l = float(np.clip(F + T, -1.0, 1.0))
+    r = float(np.clip(F - T, -1.0, 1.0))
+    to_pwm = lambda x: int(np.clip(round(x * max_pwm), -max_pwm, max_pwm))
+    return to_pwm(l), to_pwm(r)
+
+# Configuración de ejes para TILT (permite adaptar sin tocar fórmulas)
+# Seleccionar cuál eje controla avance/retroceso y cuál controla giro
+# Valores posibles para *_AXIS: 'pitch' o 'roll'; *_SIGN: 1 o -1
+TILT_FORWARD_AXIS = 'pitch'   # 'pitch' o 'roll'
+TILT_FORWARD_SIGN = 1         # 1 o -1
+TILT_TURN_AXIS = 'roll'       # 'pitch' o 'roll'
+TILT_TURN_SIGN = 1            # 1 o -1
+
+
 def es_modo_valido(modo):
     """
     Verificar si el modo recibido es válido
     """
-    return modo in [0, 1, 2, 3]
+    return modo in [0, 1, 2, 3, 4]
 
 
 
@@ -323,6 +397,59 @@ def main():
                 # MODO 3: MANUAL
                 print(" Iniciando MODO MANUAL...")
                 ejecutar_modo_manual(data_receiver, motor_controller, pwm_manager, control_modos)
+            elif modo_actual == 4:
+                # MODO 4: TILT (inclinación con BNO080)
+                print(" Iniciando MODO TILT (inclinación)...")
+                # Loop de TILT simplificado: usa quaternion del TAG para controlar motores
+                last_print = 0
+                q_ref = None  # referencia para remover yaw/offset
+                while True:
+                    d = data_receiver.read_data()
+                    if d is None:
+                        if TIEMPO_ESPERA:
+                            sleep(TIEMPO_ESPERA)
+                        continue
+                    # Verificar cambio de modo
+                    control_data = data_receiver.get_control_data_array()
+                    modo_recibido = int(control_data[1])
+                    if modo_recibido != 4:
+                        print(f" Cambiando de MODO 4 a MODO {modo_recibido}")
+                        pwm_manager.detener()
+                        break
+                    # Obtener quaternion (i,j,k,real,acc)
+                    q_i, q_j, q_k, q_r, q_acc = data_receiver.get_quaternion()
+                    # Normalizar
+                    q_i, q_j, q_k, q_r = quat_normalize(q_i, q_j, q_k, q_r)
+                    # Calibrar referencia la primera vez
+                    if q_ref is None:
+                        q_ref = (q_i, q_j, q_k, q_r)
+                        print(" TILT calibrado: referencia establecida")
+                    # Q relativa para eliminar yaw/orientación inicial: q_rel = conj(q_ref) * q_cur
+                    q_rel = quat_multiply(quat_conjugate(q_ref), (q_i, q_j, q_k, q_r))
+                    # Derivar pitch/roll desde q_rel
+                    pitch, roll = quat_to_pitch_roll(*q_rel)
+                    # Ajuste de orientación según flags (si se usan)
+                    pitch, roll = ajustar_orientacion_tilt(pitch, roll)
+                    # Aplicar mapeo de ejes configurable (yaw-invariant)
+                    if TILT_FORWARD_AXIS == 'pitch':
+                        f = TILT_FORWARD_SIGN * pitch
+                    else:
+                        f = TILT_FORWARD_SIGN * roll
+                    if TILT_TURN_AXIS == 'roll':
+                        t = TILT_TURN_SIGN * roll
+                    else:
+                        t = TILT_TURN_SIGN * pitch
+                    # Mapear inclinación directamente a PWM -255..255 con f,t
+                    vL, vR = tilt_to_pwm(f, t, dead=10, max_tilt=50.0, max_pwm=VELOCIDAD_MANUAL)
+                    pwm_manager.enviar_pwm(vL, vR)
+                    # Debug ocasional
+                    now = time.time()
+                    if now - last_print > 1.0:
+                        print(
+                            f" TILT: pitch={pitch:.1f} roll={roll:.1f} | f={f:.1f} t={t:.1f} -> L={vL} R={vR} qacc={int(q_acc)} "
+                            f"[Z180={ORIENT_Z_180} X180={ORIENT_X_180} Y180={ORIENT_Y_180} | FA={TILT_FORWARD_AXIS} FS={TILT_FORWARD_SIGN} TA={TILT_TURN_AXIS} TS={TILT_TURN_SIGN}]"
+                        )
+                        last_print = now
                 
         else:
             print(" Esperando datos válidos...")
@@ -332,4 +459,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 

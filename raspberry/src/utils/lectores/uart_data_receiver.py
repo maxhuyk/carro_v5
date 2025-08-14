@@ -2,17 +2,20 @@
 """
 UART Data Receiver Module
 Modulo para recibir datos del ESP32 via UART y retornarlos como arrays numpy
-FORMATO NUEVO CON DATOS TAG (9 valores): [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG]
+FORMATO EXTENDIDO (14 valores):
+    [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG,q_i,q_j,q_k,q_r,q_acc]
 
-Mapeo de índices ACTUALIZADO:
+Mapeo de índices:
 0-2:   Anchors UWB (A1, A2, A3) - distancias en cm, -1 si inválido
 3:     Batería carro (BAT_C) - voltaje en V, -1 si inválido  
 4-5:   Corrientes motores (ML_C, MR_C) - corriente en A, -1 si inválido
 6:     Batería del TAG (BAT_TAG) - voltaje en V, -1 si sin datos
 7:     Modo TAG (MODO_TAG) - 0-7, -1 si sin datos
 8:     Joystick TAG (JOY_TAG) - 0-7, -1 si sin datos
+9-12:  Quaternion del TAG (q_i, q_j, q_k, q_r) - unitario
+13:    Precisión del quaternion (q_acc) - 0..3
 
-NOTA: Formato simplificado que incluye datos del TAG via ESP-NOW.
+NOTA: Los 9 primeros índices se mantienen igual para compatibilidad.
 
 Author: Sistema UWB Carrito de Golf
 Date: August 2025
@@ -27,7 +30,7 @@ from threading import Lock
 class UARTDataReceiver:
     """
     Receptor de datos UART que convierte los datos recibidos en arrays numpy
-    FORMATO NUEVO CON DATOS TAG (9 valores): [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG]
+    FORMATO EXTENDIDO (14 valores): [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG,q_i,q_j,q_k,q_r,q_acc]
     """
     
     def __init__(self, port: str = '/dev/ttyAMA0', baudrate: int = 500000, timeout: float = 1.0):
@@ -49,10 +52,7 @@ class UARTDataReceiver:
         # Buffer para datos recibidos
         self.buffer = b''
         
-        # Último array de datos válido - FORMATO NUEVO CON DATOS TAG (9 valores)
-        # [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG]
-        self.last_data_array = np.zeros(9, dtype=np.float64)
-        self.data_valid = False
+    
         
     def connect(self) -> bool:
         """
@@ -100,7 +100,7 @@ class UARTDataReceiver:
         Leer datos desde UART y retornar como array numpy
         
         Returns:
-            numpy array con [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG] o None si no hay datos válidos
+            numpy array con [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG,q_i,q_j,q_k,q_r,q_acc] o None si no hay datos válidos
         """
         if not self.is_connected or not self.serial_conn:
             return None
@@ -159,13 +159,24 @@ class UARTDataReceiver:
             # Remover corchetes y dividir por comas
             values_str = array_str.strip('[]').split(',')
             
-            if len(values_str) != 9:
-                print(f"Error: Se esperaban 9 valores (formato con datos TAG), se recibieron {len(values_str)}")
+            if len(values_str) not in (9, 14):
+                print(f"Error: Se esperaban 9 o 14 valores, se recibieron {len(values_str)}")
                 return None
             
             # Convertir a float y crear array numpy
             values = [float(v.strip()) for v in values_str]
-            return np.array(values, dtype=np.float64)
+            arr = np.array(values, dtype=np.float64)
+            if arr.size == 9:
+                # Compat: expandir a 14 con quaternion por defecto
+                expanded = np.zeros(14, dtype=np.float64)
+                expanded[:9] = arr
+                expanded[9] = 0.0  # q_i
+                expanded[10] = 0.0 # q_j
+                expanded[11] = 0.0 # q_k
+                expanded[12] = 1.0 # q_r
+                expanded[13] = 0.0 # q_acc
+                return expanded
+            return arr
             
         except Exception as e:
             print(f"Error parseando buffer: {e}")
@@ -297,12 +308,12 @@ class UARTDataReceiver:
     def get_full_data_array(self) -> np.ndarray:
         """
         Obtener todos los datos como array numpy
-        Returns: numpy array con [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG]
+        Returns: numpy array con [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG,q_i,q_j,q_k,q_r,q_acc]
         """
         if self.data_valid:
             return self.last_data_array.copy()
         else:
-            return np.zeros(9, dtype=np.float64)
+            return np.zeros(14, dtype=np.float64)
     
     def get_battery_voltage(self) -> np.ndarray:
         """
@@ -363,6 +374,16 @@ class UARTDataReceiver:
             'port': self.port,
             'baudrate': self.baudrate,
             'data_valid': self.data_valid,
-            'last_data': self.last_data_array.copy() if self.data_valid else np.zeros(9, dtype=np.float64)
+            'last_data': self.last_data_array.copy() if self.data_valid else np.zeros(14, dtype=np.float64)
         }
+
+    def get_quaternion(self) -> np.ndarray:
+        """
+        Obtener quaternion del TAG como array numpy
+        Returns: numpy array con [q_i, q_j, q_k, q_r, q_acc]
+        """
+        if self.data_valid:
+            return self.last_data_array[9:14].copy()
+        else:
+            return np.array([0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float64)
 

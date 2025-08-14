@@ -36,6 +36,7 @@ void RPiComm_setup();
 void RPiComm_sendRawUWBDataWithTAG(float distances[3], bool anchor_status[3], 
                            float frequency, unsigned long count,
                            float tag_battery_voltage, uint8_t tag_modo, uint8_t tag_joystick,
+                           float tag_q_i, float tag_q_j, float tag_q_k, float tag_q_real, uint8_t tag_q_acc,
                            bool tag_data_valid);
 bool RPiComm_receiveCommand(MotorCommand &cmd);
 float RPiComm_readBatteryVoltage();

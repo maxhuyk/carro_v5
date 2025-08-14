@@ -61,6 +61,8 @@ class ControlModos:
             return "PAUSA"
         elif modo == 3:
             return "MANUAL"
+        elif modo == 4:
+            return "TILT"
         else:
             return "DESCONOCIDO"
     
