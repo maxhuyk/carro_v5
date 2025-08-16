@@ -421,7 +421,7 @@ void dw3000Task(void* parameter) {
     long long rx = 0;
     long long tx = 0;
     unsigned long last_anchor_communication = 0;
-    unsigned long communication_timeout = 300;
+    unsigned long communication_timeout = 700;
     bool local_carro_detected = false;
     unsigned long local_total_cycles = 0;
     unsigned long local_successful_cycles = 0;
