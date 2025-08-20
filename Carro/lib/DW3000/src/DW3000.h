@@ -127,6 +127,12 @@ class DW3000Class {
 	private:
 		uint8_t _csPin, _rstPin, _irqPin;
 		
+		// Per-instance state (avoid globals so multiple instances don't clash)
+		int _senderID = 0;
+		int _destinationID = 0;
+		int _ledStatus = 0;
+		uint16_t _antennaDelay = 0; // set in ctor
+		
 		// MCP23008 support
 		static Adafruit_MCP23008* _mcp; // Shared MCP23008 instance
 		static bool _mcpInitialized; // Flag to track MCP initialization

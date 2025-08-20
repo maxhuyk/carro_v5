@@ -22,6 +22,8 @@ typedef struct {
     float quatK;
     float quatReal;
     uint8_t quatAccuracy;       // 0..3
+    uint8_t bnoStability;       // Estado de estabilidad BNO080
+    uint32_t stepCount;         // Conteo de pasos
 } __attribute__((packed)) EspNowData;
 
 // Variables globales para datos recibidos del TAG
@@ -41,8 +43,9 @@ void onDataReceived(const uint8_t * mac, const uint8_t *incomingData, int len) {
         // Solo mostrar cada 40 paquetes para no saturar consola (cada 2 segundos)
         if (totalPacketsReceived % 40 == 0) {
             float voltage = receivedData.batteryVoltage_mV / 1000.0;
-            Serial.printf("[ESP-NOW] Recibido #%lu: Batería=%.2fV, Modo=%d, Joystick=%d, QuatAcc=%d\n", 
-                          totalPacketsReceived, voltage, receivedData.modo, receivedData.joystick, receivedData.quatAccuracy);
+            Serial.printf("[ESP-NOW] Recibido #%lu: Batería=%.2fV, Modo=%d, Joy=%d, qAcc=%d, Stab=%u, Steps=%lu\n", 
+                          totalPacketsReceived, voltage, receivedData.modo, receivedData.joystick, receivedData.quatAccuracy,
+                          (unsigned)receivedData.bnoStability, (unsigned long)receivedData.stepCount);
         }
     } else {
         Serial.printf("[ESP-NOW] Tamaño de datos incorrecto: %d bytes (esperado %d)\n", len, sizeof(EspNowData));
@@ -210,10 +213,12 @@ void loop() {
   float tagQuatReal = tagDataValid ? receivedData.quatReal : 1.0f;
   uint8_t tagQuatAcc = tagDataValid ? receivedData.quatAccuracy : 0;
       
-      // Enviar datos extendidos que incluyen información del TAG
+    // Enviar datos extendidos que incluyen información del TAG (incluye estabilidad y pasos)
       RPiComm_sendRawUWBDataWithTAG(distances, anchor_status, 20.0, currentCount,
-                    tagBatteryVoltage, tagModo, tagJoystick,
-                    tagQuatI, tagQuatJ, tagQuatK, tagQuatReal, tagQuatAcc,
+              tagBatteryVoltage, tagModo, tagJoystick,
+              tagQuatI, tagQuatJ, tagQuatK, tagQuatReal, tagQuatAcc,
+              tagDataValid ? receivedData.bnoStability : 0,
+              tagDataValid ? receivedData.stepCount : 0,
                     tagDataValid);
       
       lastMeasurementCount = currentCount;
@@ -221,9 +226,11 @@ void loop() {
       // Mostrar información ocasionalmente
       static int send_count = 0;
       if (++send_count % 40 == 0) { // Cada 2 segundos
-          Serial.printf("[20Hz] Enviando: UWB[%.1f,%.1f,%.1f] TAG[%.2fV,%d,%d, qAcc=%d] Valid:%s\n", 
+          Serial.printf("[20Hz] Enviando: UWB[%.1f,%.1f,%.1f] TAG[%.2fV,%d,%d, qAcc=%d, stab=%u, steps=%lu] Valid:%s\n", 
                         distances[0], distances[1], distances[2],
                         tagBatteryVoltage, tagModo, tagJoystick, tagQuatAcc,
+                        (unsigned)(tagDataValid ? receivedData.bnoStability : 0),
+                        (unsigned long)(tagDataValid ? receivedData.stepCount : 0),
                         tagDataValid ? "SI" : "NO");
       }
   }

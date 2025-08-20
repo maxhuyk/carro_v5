@@ -18,6 +18,10 @@
 #include "DW3000.h"
 
 
+// Default antenna delay must be defined before usage in the constructor
+#define ANTENNA_DELAY_DEFAULT 0x3FCA // For calibration purposes; the smaller the number, the longer the ranging results
+
+
 // Update constructor
 DW3000Class::DW3000Class(uint8_t csPin, uint8_t rstPin, uint8_t irqPin)
 	: _csPin(csPin), _rstPin(rstPin), _irqPin(irqPin)
@@ -30,15 +34,14 @@ DW3000Class::DW3000Class(uint8_t csPin, uint8_t rstPin, uint8_t irqPin)
 	config[5] = PHR_MODE_STANDARD;
 	config[6] = PHR_RATE_850KB;
 
+    // initialize per-instance state
+    _senderID = 0;
+    _destinationID = 0;
+    _ledStatus = 0;
+    _antennaDelay = ANTENNA_DELAY_DEFAULT;
 }
 
 #define DEBUG_OUTPUT 0 // Turn to 1 to get all reads, writes, etc. as info in the console
-#define ANTENNA_DELAY 0x3FCA // For calibration purposes; the smaller the number, the longer the ranging results
-
-int led_status = 0;
-
-int destination = 0x0;  // Default Values for Destination and Sender IDs
-int sender = 0x0;
 
 /*
  #####  Chip Setup  #####
@@ -322,7 +325,7 @@ void DW3000Class::writeSysConfig() {
 
     write(0x0E, 0x02, 0x01); //Enable full CIA diagnostics to get signal strength information
 
-    setTXAntennaDelay(ANTENNA_DELAY); //set default antenna delay
+    setTXAntennaDelay(_antennaDelay); // set default antenna delay per instance
 }
 
 /*
@@ -354,8 +357,8 @@ void DW3000Class::setupGPIO() {
 */
 void DW3000Class::ds_sendFrame(int stage) {
     setMode(1);
-    write(0x14, 0x01, sender & 0xFF);
-    write(0x14, 0x02, destination & 0xFF);
+    write(0x14, 0x01, _senderID & 0xFF);
+    write(0x14, 0x02, _destinationID & 0xFF);
     write(0x14, 0x03, stage & 0x7);
     setFrameLength(4);
 
@@ -380,8 +383,8 @@ void DW3000Class::ds_sendFrame(int stage) {
 */
 void DW3000Class::ds_sendRTInfo(int t_roundB, int t_replyB) {
     setMode(1);
-    write(0x14, 0x01, destination & 0xFF);
-    write(0x14, 0x02, sender & 0xFF);
+    write(0x14, 0x01, _destinationID & 0xFF);
+    write(0x14, 0x02, _senderID & 0xFF);
     write(0x14, 0x03, 4);
     write(0x14, 0x04, t_roundB);
     write(0x14, 0x08, t_replyB);
@@ -472,9 +475,11 @@ void DW3000Class::setChannel(uint8_t data) {
  @param data See all options below or in DW3000Constants.h
 */
 void DW3000Class::setPreambleLength(uint8_t data) {
-    if (data == PREAMBLE_32 || data == PREAMBLE_64 || data == PREAMBLE_1024 ||
-        data == PREAMBLE_256 || data == PREAMBLE_512 || data == PREAMBLE_1024 ||
-        data == PREAMBLE_1536 || data == PREAMBLE_2048 || data == PREAMBLE_4096) config[1] = data;
+    if (data == PREAMBLE_32 || data == PREAMBLE_64 || data == PREAMBLE_128 || data == PREAMBLE_256 ||
+        data == PREAMBLE_512 || data == PREAMBLE_1024 || data == PREAMBLE_1536 ||
+        data == PREAMBLE_2048 || data == PREAMBLE_4096) {
+        config[1] = data;
+    }
 }
 
 /*
@@ -568,10 +573,6 @@ void DW3000Class::setFrameLength(int frameLen) { // set Frame length in Bytes
 /*
  Set the Antenna Delay for delayedTX operations
  @param data Can be anything between 0 and 0xFFFF
-    antenna_delay = delay;
-    write(0x01, 0x04, delay);
-    ANTENNA_DELAY = delay;
-    write(0x01, 0x04, delay);
 }
 
 /*
@@ -579,7 +580,7 @@ void DW3000Class::setFrameLength(int frameLen) { // set Frame length in Bytes
  @param senderID The ID that should be set. Can be between 0 and 255. Default is 0
 */
 void DW3000Class::setSenderID(int senderID) {
-    sender = senderID;
+    _senderID = senderID;
 }
 
 /*
@@ -587,7 +588,7 @@ void DW3000Class::setSenderID(int senderID) {
  @param destID The ID that the frame should be sent to. Can be between 0 and 255. Default is 0
 */
 void DW3000Class::setDestinationID(int destID) {
-    destination = destID;
+    _destinationID = destID;
 }
 
 
@@ -705,7 +706,7 @@ double DW3000Class::getFirstPathSignalStrength() {
  Get the currently set Antenna Delay for delayedTX operations
  .@return Antenna Delay
 */
-int DW3000Class::getTXAntennaDelay() { //DEPRECATED use ANTENNA_DELAY variable instead!
+int DW3000Class::getTXAntennaDelay() { // Returns current antenna delay; maintained per instance
     int delay = read(0x01, 0x04) & 0xFFFF;
     return delay;
 }
@@ -902,7 +903,7 @@ void DW3000Class::prepareDelayedTX() {
 
     uint32_t exact_tx_timestamp = (long long)(rx_ts + TRANSMIT_DELAY) >> 8;
 
-    long long calc_tx_timestamp = ((rx_ts + TRANSMIT_DELAY) & ~TRANSMIT_DIFF) + ANTENNA_DELAY;
+    long long calc_tx_timestamp = ((rx_ts + TRANSMIT_DELAY) & ~TRANSMIT_DIFF) + _antennaDelay;
 
     uint32_t reply_delay = calc_tx_timestamp - rx_ts;
 
@@ -925,8 +926,8 @@ void DW3000Class::prepareDelayedTX() {
     * 7 - Error
     */
 
-    write(0x14, 0x01, sender & 0xFF);
-    write(0x14, 0x02, destination & 0xFF);
+    write(0x14, 0x01, _senderID & 0xFF);
+    write(0x14, 0x02, _destinationID & 0xFF);
     write(0x14, 0x03, reply_delay); //set frame content
 
     setFrameLength(7); // Control Byte (1 Byte) + Sender ID (1 Byte) + Dest. ID (1 Byte) + Reply Delay (4 Bytes) = 7 Bytes
@@ -1033,8 +1034,8 @@ void DW3000Class::clearSystemStatus() {
  */
 void DW3000Class::pullLEDHigh(int led) {
     if (led > 2) return;
-    led_status = led_status | (1 << led);
-    write(0x05, 0x0C, led_status);
+    _ledStatus = _ledStatus | (1 << led);
+    write(0x05, 0x0C, _ledStatus);
 }
 
 /*
@@ -1043,8 +1044,8 @@ void DW3000Class::pullLEDHigh(int led) {
  */
 void DW3000Class::pullLEDLow(int led) {
     if (led > 2) return;
-    led_status = led_status & ~((int)1 << led); //https://stackoverflow.com/questions/47981/how-to-set-clear-and-toggle-a-single-bit
-    write(0x05, 0x0C, led_status);
+    _ledStatus = _ledStatus & ~((int)1 << led); //https://stackoverflow.com/questions/47981/how-to-set-clear-and-toggle-a-single-bit
+    write(0x05, 0x0C, _ledStatus);
 }
 
 
@@ -1319,7 +1320,7 @@ uint32_t DW3000Class::readOrWriteFullAddress(uint32_t base, uint32_t sub, uint32
             payload[header_size + i] = (data >> i * 8) & 0xFF;
         }
 
-        res = (uint32_t)sendBytes(payload, 2 + payload_bytes, 0);  // "2 +" because the first 2 bytes are the header part
+    res = (uint32_t)sendBytes(payload, header_size + payload_bytes, 0);  // include actual header size (1 or 2 bytes)
         return res;
     }
 }
@@ -1409,6 +1410,6 @@ int DW3000Class::checkForDevID() {
 }
 
 void DW3000Class::setTXAntennaDelay(int delay) {
-    // Escribe el valor de delay en el registro correspondiente del DW3000
-    write(0x01, 0x04, delay);
+    _antennaDelay = (uint16_t)delay;
+    write(0x01, 0x04, _antennaDelay);
 }

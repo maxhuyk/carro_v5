@@ -119,6 +119,11 @@ class DW3000Class {
 
 	private:
 		uint8_t _csPin, _rstPin, _irqPin;
+		// Per-instance state (avoid globals so multiple instances don't clash)
+		int _senderID = 0;
+		int _destinationID = 0;
+		int _ledStatus = 0;
+		uint16_t _antennaDelay; // persisted per instance; set in ctor
 
 		// Single Bit Settings
 		void setBit(int reg_addr, int sub_addr, int shift, bool b);

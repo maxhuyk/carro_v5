@@ -2,11 +2,15 @@
 """
 UART Data Receiver Module
 Modulo para recibir datos del ESP32 via UART y retornarlos como arrays numpy
-FORMATO EXTENDIDO (14 valores):
-    [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG,q_i,q_j,q_k,q_r,q_acc]
+FORMATO EXTENDIDO (16 valores):
+    [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG,q_i,q_j,q_k,q_r,q_acc,bno_stab,steps]
 
-Mapeo de índices:
-0-2:   Anchors UWB (A1, A2, A3) - distancias en cm, -1 si inválido
+Compatibilidad:
+- Acepta también 9 (solo encabezado) y 14 (sin bno_stab/steps).
+- Se normaliza internamente a 16 valores siempre.
+
+Mapeo de índices (array final de 16):
+0-2:   Anchors UWB (A1, A2, A3) - distancias en cm, -1 o -10 si inválido
 3:     Batería carro (BAT_C) - voltaje en V, -1 si inválido  
 4-5:   Corrientes motores (ML_C, MR_C) - corriente en A, -1 si inválido
 6:     Batería del TAG (BAT_TAG) - voltaje en V, -1 si sin datos
@@ -14,8 +18,8 @@ Mapeo de índices:
 8:     Joystick TAG (JOY_TAG) - 0-7, -1 si sin datos
 9-12:  Quaternion del TAG (q_i, q_j, q_k, q_r) - unitario
 13:    Precisión del quaternion (q_acc) - 0..3
-
-NOTA: Los 9 primeros índices se mantienen igual para compatibilidad.
+14:    bno_stab - estado de estabilidad del BNO080 (uint8)
+15:    steps - contador de pasos del BNO080 (uint32)
 
 Author: Sistema UWB Carrito de Golf
 Date: August 2025
@@ -30,7 +34,7 @@ from threading import Lock
 class UARTDataReceiver:
     """
     Receptor de datos UART que convierte los datos recibidos en arrays numpy
-    FORMATO EXTENDIDO (14 valores): [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG,q_i,q_j,q_k,q_r,q_acc]
+    FORMATO EXTENDIDO (16 valores): [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG,q_i,q_j,q_k,q_r,q_acc,bno_stab,steps]
     """
     
     def __init__(self, port: str = '/dev/ttyAMA0', baudrate: int = 500000, timeout: float = 1.0):
@@ -48,9 +52,12 @@ class UARTDataReceiver:
         self.serial_conn = None
         self.is_connected = False
         self.lock = Lock()
-        
+
         # Buffer para datos recibidos
         self.buffer = b''
+        # Estado de datos
+        self.data_valid = False
+        self.last_data_array = np.zeros(16, dtype=np.float64)
         
     
         
@@ -100,7 +107,7 @@ class UARTDataReceiver:
         Leer datos desde UART y retornar como array numpy
         
         Returns:
-            numpy array con [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG,q_i,q_j,q_k,q_r,q_acc] o None si no hay datos válidos
+            numpy array con 16 valores normalizados o None si no hay datos válidos
         """
         if not self.is_connected or not self.serial_conn:
             return None
@@ -159,24 +166,33 @@ class UARTDataReceiver:
             # Remover corchetes y dividir por comas
             values_str = array_str.strip('[]').split(',')
             
-            if len(values_str) not in (9, 14):
-                print(f"Error: Se esperaban 9 o 14 valores, se recibieron {len(values_str)}")
+            if len(values_str) not in (9, 14, 16):
+                print(f"Error: Se esperaban 9, 14 o 16 valores, se recibieron {len(values_str)}")
                 return None
             
             # Convertir a float y crear array numpy
             values = [float(v.strip()) for v in values_str]
             arr = np.array(values, dtype=np.float64)
+            if arr.size == 16:
+                return arr
+            # Expandir a 16 para compatibilidad
+            expanded = np.zeros(16, dtype=np.float64)
             if arr.size == 9:
-                # Compat: expandir a 14 con quaternion por defecto
-                expanded = np.zeros(14, dtype=np.float64)
                 expanded[:9] = arr
+                # Quaternion por defecto
                 expanded[9] = 0.0  # q_i
                 expanded[10] = 0.0 # q_j
                 expanded[11] = 0.0 # q_k
                 expanded[12] = 1.0 # q_r
                 expanded[13] = 0.0 # q_acc
-                return expanded
-            return arr
+                # BNO defaults
+                expanded[14] = -1.0 # bno_stab
+                expanded[15] = -1.0 # steps
+            elif arr.size == 14:
+                expanded[:14] = arr
+                expanded[14] = -1.0 # bno_stab
+                expanded[15] = -1.0 # steps
+            return expanded
             
         except Exception as e:
             print(f"Error parseando buffer: {e}")
@@ -308,12 +324,12 @@ class UARTDataReceiver:
     def get_full_data_array(self) -> np.ndarray:
         """
         Obtener todos los datos como array numpy
-        Returns: numpy array con [A1,A2,A3,BAT_C,ML_C,MR_C,BAT_TAG,MODO_TAG,JOY_TAG,q_i,q_j,q_k,q_r,q_acc]
+        Returns: numpy array de 16 valores normalizados
         """
         if self.data_valid:
             return self.last_data_array.copy()
         else:
-            return np.zeros(14, dtype=np.float64)
+            return np.zeros(16, dtype=np.float64)
     
     def get_battery_voltage(self) -> np.ndarray:
         """
@@ -374,7 +390,7 @@ class UARTDataReceiver:
             'port': self.port,
             'baudrate': self.baudrate,
             'data_valid': self.data_valid,
-            'last_data': self.last_data_array.copy() if self.data_valid else np.zeros(14, dtype=np.float64)
+            'last_data': self.last_data_array.copy() if self.data_valid else np.zeros(16, dtype=np.float64)
         }
 
     def get_quaternion(self) -> np.ndarray:
@@ -386,4 +402,14 @@ class UARTDataReceiver:
             return self.last_data_array[9:14].copy()
         else:
             return np.array([0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float64)
+
+    def get_bno_status(self) -> np.ndarray:
+        """
+        Obtener estado del BNO: [bno_stab, steps]
+        Returns: numpy array con [bno_stab, steps]
+        """
+        if self.data_valid:
+            return self.last_data_array[14:16].copy()
+        else:
+            return np.array([-1.0, -1.0], dtype=np.float64)
 

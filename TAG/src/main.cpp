@@ -297,81 +297,14 @@ void processModeChanges() {
     }
 }
 
-// Función para calcular valor de joystick en modo manual
+// Función para calcular valor de joystick (solo modo MANUAL)
 void calculateJoystickValue() {
-    if (currentMode == MODE_TILT) {
-        // Mapear inclinación a joystick: pitch -> adelante/atrás, roll -> izquierda/derecha
-        if (!bnoReady) { joystickValue = 0; motorL = motorR = 127; return; }
-        // Actualizar datos si hay nuevos sin bloquear
-        bno.dataAvailable();
-        float pitch = bno.getPitch(); // rad
-        float roll  = bno.getRoll();  // rad
-        const float RAD2DEG = 57.2957795f;
-        float pitchDeg = pitch * RAD2DEG;
-        float rollDeg  = roll  * RAD2DEG;
-
-        // Establecer baseline al entrar al modo
-        if (!tiltBaselineSet) {
-            tiltZeroPitchDeg = pitchDeg;
-            tiltZeroRollDeg  = rollDeg;
-            tiltBaselineSet = true;
-        }
-
-        // Valores relativos
-        float relPitch = pitchDeg - tiltZeroPitchDeg;
-        float relRoll  = rollDeg  - tiltZeroRollDeg;
-
-        // Deadzone y umbrales
-        const float DEAD = 7.5f;   // grados
-        bool fwd = relPitch > DEAD;       // inclinar hacia adelante
-        bool back = relPitch < -DEAD;     // inclinar hacia atrás
-        bool right = relRoll > DEAD;      // inclinar a la derecha
-        bool left  = relRoll < -DEAD;     // inclinar a la izquierda
-
-        // Evitar opuestos simultáneos por ruido
-        if (fwd && back) { fwd = back = false; }
-        if (left && right) { left = right = false; }
-
-        // Mapeo a los mismos códigos 1..8 que modo manual
-        uint8_t val = 0;
-        if (fwd && !left && !right) val = 1;              // adelante
-        else if (fwd && left)        val = 2;              // adelante-izquierda
-        else if (!fwd && !back && left) val = 3;           // izquierda
-        else if (back && left)       val = 4;              // atrás-izquierda
-        else if (back && !left && !right) val = 5;         // atrás
-        else if (back && right)      val = 6;              // atrás-derecha
-        else if (!fwd && !back && right) val = 7;          // derecha
-        else if (fwd && right)       val = 8;              // adelante-derecha
-        else val = 0;
-
-        joystickValue = val;
-
-        // Proporcional a motores (differential drive) -> motorL/motorR en 0..255
-        // Normalizar inclinación: 0 a +/-MAX produce -1..1
-        const float MAX_TILT = 25.0f; // grados hasta saturar
-        auto clamp = [](float x, float lo, float hi){ return x < lo ? lo : (x > hi ? hi : x); };
-        float F = 0.0f; // avance (+) / retroceso (-)
-        float T = 0.0f; // giro derecha (+) / izquierda (-)
-        if (fabs(relPitch) > DEAD) F = clamp(relPitch / MAX_TILT, -1.0f, 1.0f); else F = 0.0f;
-        if (fabs(relRoll)  > DEAD) T = clamp(relRoll  / MAX_TILT, -1.0f, 1.0f); else T = 0.0f;
-
-        float l = clamp(F + T, -1.0f, 1.0f);
-        float r = clamp(F - T, -1.0f, 1.0f);
-
-        // Mapear -1..1 a 0..255 (127 = neutro)
-        auto toByte = [](float v){
-            int iv = (int)lroundf((v * 127.0f) + 128.0f); // -1->1, 0->128
-            if (iv < 0) iv = 0; if (iv > 255) iv = 255; return (uint8_t)iv;
-        };
-        motorL = toByte(l);
-        motorR = toByte(r);
-        return;
-    }
-
-    // Fuera de TILT, motores al neutro
+    // Reset por defecto
+    joystickValue = 0;
     motorL = motorR = 127;
 
-    if (currentMode != MODE_MANUAL) { joystickValue = 0; return; }
+    // Solo calcular joystick en modo MANUAL
+    if (currentMode != MODE_MANUAL) { return; }
 
     // Para joystick, tomar lecturas crudas para respuesta más inmediata
     bool up = buttons[BTN_IDX_UP].raw;
@@ -905,8 +838,9 @@ void loop() {
     if (currentTime - lastESPNowSend >= espNowInterval) {
         // Actualizar datos ESP-NOW
         espNowData.batteryVoltage_mV = (uint16_t)(current_battery_voltage * 1000.0);
-        espNowData.modo = (uint8_t)currentMode;
-        espNowData.joystick = joystickValue;
+    espNowData.modo = (uint8_t)currentMode;
+    // No enviar joystick en TILT (forzar 0). En MANUAL se envía el valor calculado.
+    espNowData.joystick = (currentMode == MODE_TILT) ? 0 : joystickValue;
     espNowData.timestamp = currentTime;
     // Adjuntar última orientación (quaternion)
     espNowData.quatI = lastQuatI;

@@ -1,8 +1,28 @@
 {
 	"folders": [
-	{ "path": "Carro" },
-	{ "path": "TAG" },
-	{ "path": "raspberry" }
-],
-	"settings": {}
+		{
+			"path": "Carro"
+		},
+		{
+			"path": "TAG"
+		},
+		{
+			"path": "raspberry"
+		},
+		{
+			"name": "CarroClean",
+			"path": "CarroClean"
+		},
+		{
+			"name": "TAGClean",
+			"path": "TAGClean"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"array": "cpp",
+			"string": "cpp",
+			"string_view": "cpp"
+		}
+	}
 }
