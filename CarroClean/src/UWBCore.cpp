@@ -41,6 +41,62 @@ static uint16_t failCountA1 = 0;
 static uint16_t failCountA2 = 0;
 static uint16_t failCountA3 = 0;
 
+// Estado y recuperación por anchor
+struct AnchorState {
+    uint16_t consecTimeouts = 0;     // timeouts consecutivos (posible falta de TAG)
+    uint16_t consecErrors = 0;       // errores/frame inválido
+    uint16_t consecNotIdle = 0;      // veces seguidas sin IDLE (sospecha trabado)
+    unsigned long lastSuccessMs = 0; // última medición válida
+    uint8_t softResets = 0;          // conteo de soft resets
+    uint8_t hardResets = 0;          // conteo de hard resets
+};
+
+static AnchorState a1State, a2State, a3State;
+
+static void anchor_soft_reinit(DW3000Class& D) {
+    // Re-configuración mínima sin reiniciar toda la interfaz
+    D.softReset();
+    delay(200);
+    D.init();
+    D.setupGPIO();
+    D.configureAsTX();
+    D.clearSystemStatus();
+}
+
+static void try_anchor_recovery(DW3000Class& D, AnchorState& S, const char* name) {
+    // Solo considerar "trabado" si el dispositivo no está en IDLE
+    if (!D.checkForIDLE()) {
+        S.consecNotIdle++;
+        if (S.consecNotIdle >= 2) {
+            Serial.printf("[UWBCore][RECOVERY] %s no IDLE (%u). Soft reinit...\n", name, S.consecNotIdle);
+            anchor_soft_reinit(D);
+            S.softResets++;
+            S.consecNotIdle = 0; // reset counter tras intento
+            delay(100);
+            // Si sigue no IDLE después de soft, intentar hard reset (de forma conservadora)
+            if (!D.checkForIDLE()) {
+                Serial.printf("[UWBCore][RECOVERY] %s sigue no IDLE. Hard reset...\n", name);
+                D.hardReset();
+                // Esperar IDLE con backoff
+                unsigned long t0 = millis();
+                while (!D.checkForIDLE() && (millis() - t0) < 1000) {
+                    delay(50);
+                }
+                D.softReset();
+                delay(200);
+                D.init();
+                D.setupGPIO();
+                D.configureAsTX();
+                D.clearSystemStatus();
+                S.hardResets++;
+            }
+        }
+    } else {
+        // Si está IDLE, no asumir trabado por falta de respuesta del TAG
+        S.consecNotIdle = 0;
+    }
+}
+
 
 // Variables globales para almacenar las últimas distancias medidas
 static float g_distances[NUM_ANCHORS] = {NAN, NAN, NAN};
@@ -213,6 +269,12 @@ void UWBCore_setup() {
 
 void UWBCore_task(void* parameter) {
     
+    // Inicializar tiempos de último éxito para no disparar recovery al inicio
+    unsigned long now0 = millis();
+    a1State.lastSuccessMs = now0;
+    a2State.lastSuccessMs = now0;
+    a3State.lastSuccessMs = now0;
+
     while (true) {
         // Delays entre anchors y ritmo global
         const int inter_anchor_delay_us = 15000; // 15ms entre anchors (MCP23008 necesita holgura)
@@ -221,23 +283,79 @@ void UWBCore_task(void* parameter) {
         Con esta configuracion de delays donde en total suman 45ms se obtiene una frecuencia de 9Hz 
         si se eliminan los delays se podria obtener una frecuencia maxima de 15Hz 
         */
-        // ANCHOR 1: ciclo completo
+        // ANCHOR 1: verificación y posible recovery si está no IDLE
+        try_anchor_recovery(anchor1, a1State, "A1");
+        // ciclo completo
         float d1 = dsr_once(anchor1, failCountA1);
+        if (!isnan(d1)) {
+            a1State.lastSuccessMs = millis();
+            a1State.consecTimeouts = 0;
+            a1State.consecErrors = 0;
+        } else {
+            // Diferenciar falta de TAG (IDLE) de trabado (no IDLE)
+            if (!anchor1.checkForIDLE()) {
+                a1State.consecNotIdle++;
+            }
+            a1State.consecTimeouts++;
+        }
         delayMicroseconds(inter_anchor_delay_us);
 
-        // ANCHOR 2: ciclo completo
+        // ANCHOR 2
+        try_anchor_recovery(anchor2, a2State, "A2");
         float d2 = dsr_once(anchor2, failCountA2);
+        if (!isnan(d2)) {
+            a2State.lastSuccessMs = millis();
+            a2State.consecTimeouts = 0;
+            a2State.consecErrors = 0;
+        } else {
+            if (!anchor2.checkForIDLE()) {
+                a2State.consecNotIdle++;
+            }
+            a2State.consecTimeouts++;
+        }
         delayMicroseconds(inter_anchor_delay_us);
 
-        // ANCHOR 3: ciclo completo
+        // ANCHOR 3
+        try_anchor_recovery(anchor3, a3State, "A3");
         float d3 = dsr_once(anchor3, failCountA3);
+        if (!isnan(d3)) {
+            a3State.lastSuccessMs = millis();
+            a3State.consecTimeouts = 0;
+            a3State.consecErrors = 0;
+        } else {
+            if (!anchor3.checkForIDLE()) {
+                a3State.consecNotIdle++;
+            }
+            a3State.consecTimeouts++;
+        }
+
+        // Recovery adicional por ausencia prolongada de éxitos + no IDLE repetido
+        unsigned long nowMs2 = millis();
+        if ((nowMs2 - a1State.lastSuccessMs) > 10000 && a1State.consecNotIdle >= 2) {
+            Serial.println("[UWBCore][RECOVERY] A1 sin éxitos >10s y no IDLE: reinit");
+            anchor_soft_reinit(anchor1);
+            a1State.softResets++;
+            a1State.consecNotIdle = 0;
+        }
+        if ((nowMs2 - a2State.lastSuccessMs) > 10000 && a2State.consecNotIdle >= 2) {
+            Serial.println("[UWBCore][RECOVERY] A2 sin éxitos >10s y no IDLE: reinit");
+            anchor_soft_reinit(anchor2);
+            a2State.softResets++;
+            a2State.consecNotIdle = 0;
+        }
+        if ((nowMs2 - a3State.lastSuccessMs) > 10000 && a3State.consecNotIdle >= 2) {
+            Serial.println("[UWBCore][RECOVERY] A3 sin éxitos >10s y no IDLE: reinit");
+            anchor_soft_reinit(anchor3);
+            a3State.softResets++;
+            a3State.consecNotIdle = 0;
+        }
 
         // Publicar resultados en la estructura compartida (thread-safe)
         bool v1 = !isnan(d1);
         bool v2 = !isnan(d2);
         bool v3 = !isnan(d3);
         unsigned long nowMs = millis();
-        if (xSemaphoreTake(uwbSemaphore, pdMS_TO_TICKS(5)) == pdTRUE) {
+    if (xSemaphoreTake(uwbSemaphore, pdMS_TO_TICKS(5)) == pdTRUE) {
             g_uwb_raw_data.distance1 = d1;
             g_uwb_raw_data.distance2 = d2;
             g_uwb_raw_data.distance3 = d3;
