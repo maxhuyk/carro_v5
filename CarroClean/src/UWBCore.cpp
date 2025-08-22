@@ -190,7 +190,7 @@ static float dsr_once(DW3000Class& D, uint16_t& failCount, unsigned long rxTimeo
     int t_replyB = D.read(0x12, 0x08);
     int ranging_time = D.ds_processRTInfo(t_roundA, t_replyA, t_roundB, t_replyB, clock_offset);
     float distance = D.convertToCM(ranging_time);
-    if (distance < 0 || distance > 10000) distance = NAN;
+    if (distance < 0 || distance > 100000) distance = NAN;
     return distance;
 }
 
@@ -282,6 +282,7 @@ void UWBCore_task(void* parameter) {
         /*
         Con esta configuracion de delays donde en total suman 45ms se obtiene una frecuencia de 9Hz 
         si se eliminan los delays se podria obtener una frecuencia maxima de 15Hz 
+        probar eliminar los delays
         */
         // ANCHOR 1: verificación y posible recovery si está no IDLE
         try_anchor_recovery(anchor1, a1State, "A1");

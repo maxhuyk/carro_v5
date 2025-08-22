@@ -2,8 +2,8 @@
 import os
 import csv
 import time
+import numpy as np
 from datetime import datetime
-import inspect
 
 from src.config.variables import DATA_PORT, BAUDRATE, TIEMPO_ESPERA
 from src.utils.lectores.uart_data_receiver import UARTDataReceiver
@@ -12,13 +12,11 @@ LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs')
 LOG_FILE = os.path.join(LOG_DIR, f"uart_errors_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
 
 # CSV columns: timestamp_iso, event, sensor_index, value, duration_sec
-# event: START(-10 detected), END(recovered), SAMPLE(optional periodic sample)
+# event: START(NaN detected), END(recovered), SAMPLE(optional periodic sample)
 
 class SensorErrorTracker:
-    def __init__(self, n_sensors: int = 3, error_value: float = -10.0):
+    def __init__(self, n_sensors: int = 3):
         self.n = n_sensors
-        # Solo -10 como valor de error
-        self.error_value = error_value
         self.active = [False] * n_sensors
         self.start_ts = [0.0] * n_sensors
 
@@ -27,9 +25,15 @@ class SensorErrorTracker:
         if values is None or len(values) < self.n:
             return
         for i in range(self.n):
-            v = float(values[i])
-            # Comparación exacta (tolerante a float): -10
-            is_error = int(round(v)) == int(self.error_value)
+            try:
+                v = float(values[i])
+                # Detectar NaN
+                is_error = np.isnan(v)
+            except (ValueError, TypeError):
+                # Si no se puede convertir a float, considerar como error
+                is_error = True
+                v = np.nan
+                
             if not self.active[i] and is_error:
                 self.active[i] = True
                 self.start_ts[i] = now_ts
@@ -37,7 +41,7 @@ class SensorErrorTracker:
                     'timestamp_iso': datetime.fromtimestamp(now_ts).isoformat(),
                     'event': 'START',
                     'sensor_index': i,
-                    'value': v,
+                    'value': 'NaN' if np.isnan(v) else str(v),
                     'duration_sec': ''
                 })
             elif self.active[i] and not is_error:
@@ -60,18 +64,12 @@ def main():
     if not receiver.connect():
         print(f"Error: No se pudo conectar al puerto {DATA_PORT}")
         return
-    # Diagnóstico: mostrar desde qué archivo se importó UARTDataReceiver
-    try:
-        src_path = inspect.getsourcefile(UARTDataReceiver)
-        print(f"UARTDataReceiver cargado desde: {src_path}")
-    except Exception:
-        pass
 
     with open(LOG_FILE, 'w', newline='') as f:
         fieldnames = ['timestamp_iso', 'event', 'sensor_index', 'value', 'duration_sec']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        tracker = SensorErrorTracker(n_sensors=3, error_value=-10.0)
+        tracker = SensorErrorTracker(n_sensors=3)
 
         print(f"Monitoreando UART. Log: {LOG_FILE}")
         try:
@@ -113,3 +111,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

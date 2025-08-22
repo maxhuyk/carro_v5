@@ -1,15 +1,6 @@
 import time
 import depthai as dai
-import heapq  # Para implementar el algoritmo A* de manera eficiente
-import os
-import sys
-import math
-
-# Asegurar import de módulos locales (../src)
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-# Control de motores por UART (sin Rerun)
-from src.utils.controladores.uart_motor_controller import UARTMotorController
+import heapq # Para implementar el algoritmo A* de manera eficiente
 
 # La función A* para encontrar el camino más corto en la cuadrícula de ocupación
 def find_path_astar(grid, start, end):
@@ -85,51 +76,6 @@ def convert_to_grid(rtab_grid_data, grid_size=100, resolution=0.1):
     
     return grid
 
-def get_translation_xz(tf_msg):
-    """Compatibilidad para obtener (x,z) de TransformData en distintas APIs."""
-    if hasattr(tf_msg, 'getTranslation'):
-        t = tf_msg.getTranslation()
-        if hasattr(t, 'x') and hasattr(t, 'z'):
-            return float(t.x), float(t.z)
-        try:
-            return float(t[0]), float(t[2])
-        except Exception:
-            pass
-    if hasattr(tf_msg, 'translation'):
-        tr = tf_msg.translation
-        if hasattr(tr, 'x') and hasattr(tr, 'z'):
-            return float(tr.x), float(tr.z)
-        try:
-            return float(tr[0]), float(tr[2])
-        except Exception:
-            pass
-    return 0.0, 0.0
-
-# Helper de compatibilidad para crear XLinkOut en distintas versiones de DepthAI (v2/v3)
-def create_xlink_out(pipeline: 'dai.Pipeline', stream_name: str):
-    NodeType = None
-    # DepthAI v2
-    if hasattr(dai, 'node') and hasattr(dai.node, 'XLinkOut'):
-        NodeType = dai.node.XLinkOut
-    # DepthAI v3 (posible reubicación en submódulo IO)
-    elif hasattr(dai, 'node') and hasattr(dai.node, 'IO') and hasattr(dai.node.IO, 'XLinkOut'):
-        NodeType = dai.node.IO.XLinkOut
-    # Fallback (algunos paquetes exponen clase en el módulo raíz)
-    elif hasattr(dai, 'XLinkOut'):
-        NodeType = dai.XLinkOut
-    else:
-        raise AttributeError("No se encontró XLinkOut en depthai; verifique la versión/API de DepthAI v3.")
-    node = pipeline.create(NodeType)
-    if hasattr(node, 'setStreamName'):
-        node.setStreamName(stream_name)
-    else:
-        # API alternativa: propiedad o método distinto
-        try:
-            node.streamName = stream_name
-        except Exception:
-            pass
-    return node
-
 # --- Inicio del pipeline de DepthAI ---
 with dai.Pipeline() as p:
     fps = 30
@@ -145,15 +91,9 @@ with dai.Pipeline() as p:
     odom = p.create(dai.node.RTABMapVIO)
     slam = p.create(dai.node.RTABMapSLAM)
     
-    # Reducir tamaño del mensaje del grid para evitar límites de XLink
-    params = {
-        "RGBD/CreateOccupancyGrid": "true",
-        "Grid/3D": "false",          # 2D grid para menos datos
-        "Grid/DepthDecimation": "3", # decimación de profundidad
-        "Grid/CellSize": "0.20",     # celdas más grandes
-        "Grid/RangeMax": "6.0",      # limitar alcance
-        "Rtabmap/SaveWMState": "true"
-    }
+    params = {"RGBD/CreateOccupancyGrid": "true",
+              "Grid/3D": "true",
+              "Rtabmap/SaveWMState": "true"}
     slam.setParams(params)
     
     imu.enableIMUSensor([dai.IMUSensor.ACCELEROMETER_RAW, dai.IMUSensor.GYROSCOPE_RAW], 200)
@@ -174,8 +114,11 @@ with dai.Pipeline() as p:
     stereo.setDepthAlign(dai.CameraBoardSocket.CAM_B)
 
     # Salida para acceder a la cuadrícula de ocupación y a la transformación de odometría
-    xout_occupancy_grid = create_xlink_out(p, "occupancy_grid")
-    xout_transform = create_xlink_out(p, "odom_transform")
+    xout_occupancy_grid = p.create(dai.node.XLinkOut)
+    xout_occupancy_grid.setStreamName("occupancy_grid")
+
+    xout_transform = p.create(dai.node.XLinkOut)
+    xout_transform.setStreamName("odom_transform")
 
     # Linking
     left.requestOutput((width, height)).link(stereo.left)
@@ -199,96 +142,71 @@ with dai.Pipeline() as p:
     # Conectar el passthrough de la imagen rectificada para que no se detenga el flujo
     slam.passthroughRect.link(slam.rect)
     
-    # Arrancamos la tubería y la navegación (sin Rerun)
+    # Arrancamos la tubería
     with dai.Device(p) as device:
         print("Pipeline iniciado. Presiona Ctrl+C para detener.")
-
-        # Queues de salida
-        q_occupancy_grid = device.getOutputQueue(name="occupancy_grid")
-        q_odom_transform = device.getOutputQueue(name="odom_transform")
-
-        # Controlador de motores
-        motor = UARTMotorController(port='/dev/ttyAMA0', baudrate=500000)
-        connected = motor.connect()
-        if connected:
-            # Suavizado moderado para evitar tirones
-            motor.set_smoothing_parameters(enable=True, max_acceleration=30)
-            # Limitar velocidad por seguridad
-            motor.set_speed_limits(max_speed=180, min_speed=-180)
-        else:
-            print("Advertencia: No se pudo conectar al controlador de motores. Solo navegación simulada.")
-
-        # Parámetros de navegación
-        grid_size = 100
-        resolution = 0.1  # metros por celda (debe coincidir con convert_to_grid)
-        origin_x = grid_size // 2
-        origin_y = grid_size // 2
-        base_speed = 120  # PWM base avance
-        turn_gain = 0.8   # Ganancia de giro (0-1)
-
-        try:
-            while True:
-                # Odometría
+        
+        q_occupancy_grid = device.getOutputQueue(name="occupancy_grid", maxSize=8, blocking=False)
+        q_odom_transform = device.getOutputQueue(name="odom_transform", maxSize=8, blocking=False)
+        
+        while True:
+            try:
+                # Obtenemos la posición actual del coche de la odometría
                 transform_data = q_odom_transform.tryGet()
                 if transform_data is None:
+                    # Si no hay datos, continuamos esperando
                     time.sleep(0.01)
                     continue
 
-                current_x, current_z = get_translation_xz(transform_data)
+                # La posición actual del coche en el espacio 3D
+                current_x = transform_data.translation.x
+                current_z = transform_data.translation.z # Usamos Z como el eje "hacia adelante"
 
-                # Mapa de ocupación
+                # Obtenemos los datos de la cuadrícula de ocupación si están disponibles
                 occupancy_grid_data = q_occupancy_grid.tryGet()
-                grid = convert_to_grid(occupancy_grid_data, grid_size=grid_size, resolution=resolution)
+                grid = convert_to_grid(occupancy_grid_data)
 
-                # Posición actual en celdas (fila, col) == (y, x)
-                current_position = (
-                    int(origin_x + current_x / resolution),
-                    int(origin_y - current_z / resolution)
-                )
+                # Definimos el tamaño y la resolución de la cuadrícula
+                grid_size = 100
+                resolution = 0.1
+                origin_x = grid_size // 2
+                origin_y = grid_size // 2
 
-                # Destino relativo al coche (ejemplo: 1m a la derecha, 2m adelante)
+                # Convertimos la posición 3D del coche a una celda de la cuadrícula 2D
+                current_position = (int(origin_x + current_x / resolution), int(origin_y - current_z / resolution))
+
+                # --- Lógica para el tag ---
+                # A diferencia del código anterior, el destino es relativo al coche.
+                # Aquí simulamos la detección de un tag. En la vida real, lo obtendrías
+                # de otro nodo de la pipeline o de un detector de AprilTags.
+                # Por ejemplo, un tag 1 metro en X y 2 metros en Z (hacia adelante)
                 tag_x_relative = 1.0
                 tag_z_relative = 2.0
+                
+                # Calculamos la posición del tag en el sistema de coordenadas del mapa
                 tag_x_global = current_x + tag_x_relative
                 tag_z_global = current_z + tag_z_relative
-                destination = (
-                    int(origin_x + tag_x_global / resolution),
-                    int(origin_y - tag_z_global / resolution)
-                )
 
-                # Planificar ruta
+                # Convertimos la posición global del tag a una celda de la cuadrícula
+                destination = (int(origin_x + tag_x_global / resolution), int(origin_y - tag_z_global / resolution))
+
+                # Ejecutamos el algoritmo A* para encontrar la ruta
                 path = find_path_astar(grid, current_position, destination)
-
-                if path and len(path) > 0:
+                
+                if path:
+                    # El próximo paso es la siguiente celda en la ruta
                     next_step = path[1] if len(path) > 1 else destination
-                    print(f"pos={current_position} dest={destination} next={next_step}")
-
-                    # Control: calcular ángulo hacia la próxima celda.
-                    # Vector objetivo en coords del mapa: (dx, dy). Adelante ≈ dy<0
-                    dx = next_step[0] - current_position[0]
-                    dy = next_step[1] - current_position[1]
-                    # Error de orientación: +giro derecha si dx>0 y objetivo adelante
-                    # Aproximación: ángulo hacia el punto relativo al eje -Y (adelante)
-                    # angle = atan2(dx, -dy)  -> 0=recto adelante, +derecha, -izquierda
-                    angle = math.atan2(dx, -dy) if (dx != 0 or dy != 0) else 0.0
-                    # Mapear a [-1,1]
-                    turn = max(-1.0, min(1.0, (angle / (math.pi/2)) * turn_gain))
-                    # Reducir avance si el giro es grande
-                    forward = int(base_speed * max(0.2, 1.0 - abs(turn)))
-
-                    if connected:
-                        # Aplicar comando a motores (move_with_steering usa turn_rate en [-1,1])
-                        motor.move_with_steering(forward_speed=forward, turn_rate=turn)
+                    print(f"Posición actual del coche: {current_position}")
+                    print(f"Posición del tag (destino): {destination}")
+                    print(f"El próximo paso es moverse a la celda: {next_step}")
+                    # # Aquí iría la llamada a la función para mover el coche
+                    # move_car_to(next_step)
                 else:
-                    print("Sin ruta: detener por seguridad")
-                    if connected:
-                        motor.stop_motors()
+                    print("No se encontró una ruta. El destino podría estar bloqueado.")
+                    # # Aquí iría la lógica para detener o esperar a que la cuadrícula se actualice
+                    # stop_car()
 
-                time.sleep(0.02)
-
-        except KeyboardInterrupt:
-            print("Interrumpido. Deteniendo motores...")
-        finally:
-            if connected:
-                motor.stop_motors()
-                motor.disconnect()
+                time.sleep(0.01)
+            
+            except KeyboardInterrupt:
+                break

@@ -1,5 +1,6 @@
 #include "MotorController.h"
 #include "RPiComm.h"
+#include <ArduinoJson.h>
 
 // ========== MOTOR PWM DEFINITIONS ==========
 // Pines para los DRV8701 (ambos motores)
@@ -26,38 +27,21 @@ static bool pwm_initialized = false;
 static unsigned long lastCommandTime = 0;
 static const unsigned long COMMAND_TIMEOUT = 2000; // 2 segundos
 
-// Inicializa los pines de los drivers (sin test)
-void setupMotorPWM() {
-    Serial.println("[PWM] Inicializando pines y PWM...");
-    pinMode(ENABLE_MOTORS, OUTPUT);
-    pinMode(PWML1, OUTPUT);
-    pinMode(PWML2, OUTPUT);
-    pinMode(PWMR1, OUTPUT);
-    pinMode(PWMR2, OUTPUT);
+// Declaración de función
+void executeMotorCommand(const MotorCommand& cmd);
+
+// ========== MOTOR PWM BASE FUNCTIONS ==========
+// Función para desactivar completamente los motores
+void disableMotors() {
     digitalWrite(ENABLE_MOTORS, LOW);
-    digitalWrite(PWML1, LOW);
-    digitalWrite(PWML2, LOW);
-    digitalWrite(PWMR1, LOW);
-    digitalWrite(PWMR2, LOW);
-    
-    if (!pwm_initialized) {
-        uint32_t freqL1 = ledcSetup(CH_L1, PWM_FREQ, PWM_RES);
-        uint32_t freqL2 = ledcSetup(CH_L2, PWM_FREQ, PWM_RES);
-        uint32_t freqR1 = ledcSetup(CH_R1, PWM_FREQ, PWM_RES);
-        uint32_t freqR2 = ledcSetup(CH_R2, PWM_FREQ, PWM_RES);
-        ledcAttachPin(PWML1, CH_L1);
-        ledcAttachPin(PWML2, CH_L2);
-        ledcAttachPin(PWMR1, CH_R1);
-        ledcAttachPin(PWMR2, CH_R2);
-        pwm_initialized = true;
-        
-        if (freqL1 == PWM_FREQ && freqL2 == PWM_FREQ && freqR1 == PWM_FREQ && freqR2 == PWM_FREQ) {
-            Serial.println("[PWM] PWM inicializado correctamente");
-        } else {
-            Serial.println("[PWM] ADVERTENCIA: alguna frecuencia PWM no coincide");
-        }
-    }
+    ledcWrite(CH_L1, 0);
+    ledcWrite(CH_L2, 0);
+    ledcWrite(CH_R1, 0);
+    ledcWrite(CH_R2, 0);
+    Serial.println("[PWM] Motores desactivados completamente");
 }
+
+// (enableMotors eliminado: enable se maneja implícitamente con PWM/ENABLE_MOTORS)
 
 // pwm: 0 a 100, dir: true=adelante, false=atrás (COMO EL TEST ORIGINAL)
 void setMotorL(int pwm, bool dir) {
@@ -106,6 +90,43 @@ void setMotorR(int pwm, bool dir) {
     }
 }
 
+// setMotorR_direct eliminado (no usado)
+
+// Inicializa los pines de los drivers (sin test)
+void setupMotorPWM() {
+    Serial.println("[PWM] Inicializando pines y PWM...");
+    pinMode(ENABLE_MOTORS, OUTPUT);
+    pinMode(PWML1, OUTPUT);
+    pinMode(PWML2, OUTPUT);
+    pinMode(PWMR1, OUTPUT);
+    pinMode(PWMR2, OUTPUT);
+    digitalWrite(ENABLE_MOTORS, LOW);
+    digitalWrite(PWML1, LOW);
+    digitalWrite(PWML2, LOW);
+    digitalWrite(PWMR1, LOW);
+    digitalWrite(PWMR2, LOW);
+    
+    if (!pwm_initialized) {
+        uint32_t freqL1 = ledcSetup(CH_L1, PWM_FREQ, PWM_RES);
+        uint32_t freqL2 = ledcSetup(CH_L2, PWM_FREQ, PWM_RES);
+        uint32_t freqR1 = ledcSetup(CH_R1, PWM_FREQ, PWM_RES);
+        uint32_t freqR2 = ledcSetup(CH_R2, PWM_FREQ, PWM_RES);
+        ledcAttachPin(PWML1, CH_L1);
+        ledcAttachPin(PWML2, CH_L2);
+        ledcAttachPin(PWMR1, CH_R1);
+        ledcAttachPin(PWMR2, CH_R2);
+        pwm_initialized = true;
+        
+        if (freqL1 == PWM_FREQ && freqL2 == PWM_FREQ && freqR1 == PWM_FREQ && freqR2 == PWM_FREQ) {
+            Serial.println("[PWM] PWM inicializado correctamente");
+        } else {
+            Serial.println("[PWM] ADVERTENCIA: alguna frecuencia PWM no coincide");
+        }
+    }
+}
+
+// ========== MOTOR CONTROLLER FUNCTIONS ==========
+
 void setupMotorController() {
     RPiComm_setup();
     setupMotorPWM();
@@ -117,13 +138,42 @@ void setupMotorController() {
     Serial.println("[MotorController] Initialized");
 }
 
+void processSerialCommands() {
+    MotorCommand cmd;
+    
+    // Verificar si hay comandos de la Raspberry Pi
+    if (RPiComm_receiveCommand(cmd)) {
+        lastCommandTime = millis();
+        
+        if (cmd.command_type == 'M') {
+            // Comando de motor
+            executeMotorCommand(cmd);
+        }
+        else if (cmd.command_type == 'S') {
+            // Parada de emergencia
+            emergencyStop();
+        }
+    }
+    
+    // Timeout de seguridad: si no hay comunicación, parar motores
+    if (motorsEnabled && (millis() - lastCommandTime > COMMAND_TIMEOUT)) {
+        emergencyStop();
+        Serial.println("[MotorController] TIMEOUT: Sin comunicación con RPi, parando motores");
+    }
+    
+    // Enviar heartbeat periódico
+    RPiComm_sendHeartbeat();
+}
+
+// sendUWBData eliminado (no usado)
+
 void executeMotorCommand(const MotorCommand& cmd) {
     if (cmd.emergency_stop) {
         emergencyStop();
         return;
     }
     
-    // CONVERTIR valores de GUI (-255 a +255) con zona muerta REAL en duty (0-255)
+    // CONVERTIR valores de GUI (-255 a +255) con zona muerta real
     int left_speed = constrain(cmd.motor_left_speed, -255, 255);
     int right_speed = constrain(cmd.motor_right_speed, -255, 255);
     
@@ -133,33 +183,30 @@ void executeMotorCommand(const MotorCommand& cmd) {
         Serial.printf("[MOTOR_CMD] GUI values: L=%d, R=%d\n", left_speed, right_speed);
     }
     
-    // Definir zona muerta real (PWM duty mínimo para moverse) en UNIDADES DUTY 0..255
-    const int DEADZONE_DUTY = 60; // mínimo real
-
-    // 1) Mapear magnitud GUI -> DUTY (0..255) aplicando deadzone en duty
-    int dutyL = 0;
-    int dutyR = 0;
-    if (abs(left_speed) > 0) {
-        dutyL = map(abs(left_speed), 1, 255, DEADZONE_DUTY, 255);
-        if (dutyL < DEADZONE_DUTY) dutyL = DEADZONE_DUTY;
+    // Definir zona muerta real (PWM duty mínimo para moverse)
+    const int DEADZONE_PWM = 60; // duty mínimo real (0-255)
+    // Mapeo: GUI 0 -> 0, GUI 1-255 -> 60-255 (duty)
+    int left_pwm, right_pwm;
+    if (abs(left_speed) == 0) {
+        left_pwm = 0;
+    } else {
+        left_pwm = map(abs(left_speed), 1, 255, DEADZONE_PWM, 100); // 100 en escala 0-100
+        if (left_pwm < DEADZONE_PWM) left_pwm = DEADZONE_PWM;
     }
-    if (abs(right_speed) > 0) {
-        dutyR = map(abs(right_speed), 1, 255, DEADZONE_DUTY, 255);
-        if (dutyR < DEADZONE_DUTY) dutyR = DEADZONE_DUTY;
+    if (abs(right_speed) == 0) {
+        right_pwm = 0;
+    } else {
+        right_pwm = map(abs(right_speed), 1, 255, DEADZONE_PWM, 100);
+        if (right_pwm < DEADZONE_PWM) right_pwm = DEADZONE_PWM;
     }
-
-    // 2) Convertir DUTY -> porcentaje 0..100 para la API setMotorL/R existente
-    int left_pwm = map(dutyL, 0, 255, 0, 100);
-    int right_pwm = map(dutyR, 0, 255, 0, 100);
-
     bool left_dir = (left_speed >= 0);
     bool right_dir = (right_speed >= 0);
     
     // Solo mostrar conversión si hay movimiento
     if (has_movement) {
-    Serial.printf("[MOTOR_CMD] Converted: L=%d%% (duty=%d) dir=%s, R=%d%% (duty=%d) dir=%s\n", 
-             left_pwm, dutyL, left_dir ? "FWD" : "REV", 
-             right_pwm, dutyR, right_dir ? "FWD" : "REV");
+        Serial.printf("[MOTOR_CMD] Converted: L_PWM=%d(dir=%s), R_PWM=%d(dir=%s)\n", 
+                     left_pwm, left_dir ? "FWD" : "REV", 
+                     right_pwm, right_dir ? "FWD" : "REV");
     }
     
     // Verificar si ambos motores están parados
@@ -178,39 +225,20 @@ void executeMotorCommand(const MotorCommand& cmd) {
     }
 }
 
-void processSerialCommands() {
-    MotorCommand cmd;
-    
-    // Verificar si hay comandos de la Raspberry Pi
-    if (RPiComm_receiveCommand(cmd)) {
-        lastCommandTime = millis();
-    // Ejecutar siempre el comando recibido.
-    // La parada de emergencia se maneja dentro de executeMotorCommand() con cmd.emergency_stop
-    executeMotorCommand(cmd);
-    }
-    
-    // Timeout de seguridad: si no hay comunicación, parar motores
-    if (motorsEnabled && (millis() - lastCommandTime > COMMAND_TIMEOUT)) {
-        emergencyStop();
-        Serial.println("[MotorController] TIMEOUT: Sin comunicación con RPi, parando motores");
-    }
-    
-}
-
-
+// setMotorSpeed eliminado (no usado)
 
 void emergencyStop() {
     disableMotors();
     motorsEnabled = false;
     
-    
+    // Notificar a la Raspberry Pi
+    JsonDocument doc;
+    doc["type"] = "emergency_stop_ack";
+    doc["timestamp"] = millis();
+    String output;
+    serializeJson(doc, output);
+    RPiComm_sendJSON(output.c_str());
 }
 
-void disableMotors() {
-    digitalWrite(ENABLE_MOTORS, LOW);
-    ledcWrite(CH_L1, 0);
-    ledcWrite(CH_L2, 0);
-    ledcWrite(CH_R1, 0);
-    ledcWrite(CH_R2, 0);
-    Serial.println("[PWM] Motores desactivados completamente");
-}
+// Lecturas de sensores eliminadas (se usan funciones de RPiComm)
+

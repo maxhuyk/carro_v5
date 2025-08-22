@@ -1,6 +1,13 @@
 import numpy as np
 
 
+# ## #################################################################
+# CONTROL DE MOVIENTO SIN SENAL
+# #################################################################
+# DISTANCIA DE SEGURIDAD
+DISTANCIA_FALLBACK = 2500  # Distancia de seguridad para moverse sin señal
+VELOCIDAD_FALLBACK = 15  # Velocidad de seguridad para moverse sin señal
+TIMEOUT_FALLBACK = 1.0  # Tiempo máximo en segundos para usar fallback
 
 # #################################################################
 # NÚMERO DE CICLOS

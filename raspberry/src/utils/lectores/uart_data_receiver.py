@@ -171,7 +171,14 @@ class UARTDataReceiver:
                 return None
             
             # Convertir a float y crear array numpy
-            values = [float(v.strip()) for v in values_str]
+            values = []
+            for v in values_str:
+                val = float(v.strip())
+                # Convertir -10 a NaN
+                if val == -10.0:
+                    val = np.nan
+                values.append(val)
+            
             arr = np.array(values, dtype=np.float64)
             if arr.size == 16:
                 return arr

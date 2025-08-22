@@ -18,7 +18,10 @@ PID_DISTANCIA_KP, PID_DISTANCIA_KI, PID_DISTANCIA_KD,
 PID_DISTANCIA_ALPHA, PID_DISTANCIA_INTEGRAL_MAX,
 VELOCIDAD_MAXIMA,
 ACELERACION_MAXIMA,
-VELOCIDAD_MANUAL
+VELOCIDAD_MANUAL,
+DISTANCIA_FALLBACK,
+VELOCIDAD_FALLBACK,
+TIMEOUT_FALLBACK
 )
 from src.utils.lectores.uart_data_receiver import UARTDataReceiver
 from src.utils.auxiliares.mediam import MediaMovil
@@ -109,7 +112,7 @@ def tilt_to_pwm(pitch_deg, roll_deg, dead=7.5, max_tilt=25.0, max_pwm=255):
 # Seleccionar cuál eje controla avance/retroceso y cuál controla giro
 # Valores posibles para *_AXIS: 'pitch' o 'roll'; *_SIGN: 1 o -1
 TILT_FORWARD_AXIS = 'pitch'   # 'pitch' o 'roll'
-TILT_FORWARD_SIGN = 1         # 1 o -1
+TILT_FORWARD_SIGN = -1         # 1 o -1
 TILT_TURN_AXIS = 'roll'       # 'pitch' o 'roll'
 TILT_TURN_SIGN = 1            # 1 o -1
 
@@ -124,67 +127,135 @@ def es_modo_valido(modo):
 
 def ejecutar_modo_seguimiento(data_receiver, motor_controller, pwm_manager, control_modos, error_logger=None):
     """
-    MODO 1: Seguimiento continuo con PID
+    MODO 1: Seguimiento continuo con pipeline estable de v5, manteniendo extras v7.
     """
     media_movil = MediaMovil(n_sensores=3, ventana=MEDIA_MOVIL_VENTANA)
     kalman = SimpleKalman(n_sensores=3, Q=KALMAN_Q, R=KALMAN_R)
-    
-    # PID para control de ángulo
-    pid = PIDController(kp=1.2, ki=0.01, kd=0.3, setpoint=0.0, alpha=PID_ALPHA, 
-                       salida_maxima=PID_SALIDA_MAX, integral_maxima=INTEGRAL_MAX)
-    
-    # PID para control de distancia
-    pid_distancia = PIDController(kp=PID_DISTANCIA_KP, ki=PID_DISTANCIA_KI, kd=PID_DISTANCIA_KD, 
-                                  setpoint=DISTANCIA_OBJETIVO, alpha=PID_DISTANCIA_ALPHA, 
+
+    # PID de v5 para ángulo
+    pid = PIDController(kp=1.2, ki=0.01, kd=0.3, setpoint=0.0, alpha=PID_ALPHA,
+                        salida_maxima=PID_SALIDA_MAX, integral_maxima=INTEGRAL_MAX)
+
+    # PID de distancia como v5
+    pid_distancia = PIDController(kp=PID_DISTANCIA_KP, ki=PID_DISTANCIA_KI, kd=PID_DISTANCIA_KD,
+                                  setpoint=DISTANCIA_OBJETIVO, alpha=PID_DISTANCIA_ALPHA,
                                   salida_maxima=VELOCIDAD_MAXIMA, integral_maxima=PID_DISTANCIA_INTEGRAL_MAX)
-    
+
     distancias_previas = None
     angulo_anterior = 0
     velocidad_actual = 0
     
-    
+    # Variables para modo fallback
+    ultimo_angulo_valido = 0
+    ultima_distancia_valida = DISTANCIA_OBJETIVO
+    primer_nan_tiempo = None
+    en_modo_fallback = False
+
     while True:
         data = data_receiver.read_data()
-        
+
         if data is not None:
-            # Cambio de modo seguro
-            control_data = data_receiver.get_control_data_array()
-            modo_recibido = int(control_data[1])
-            
-            # Cambio de modo inmediato si es válido y distinto
+            # Cambio de modo con confirmación breve (anti-jitter)
+            modo_recibido = int(data_receiver.get_control_data_array()[1])
             if es_modo_valido(modo_recibido) and modo_recibido != 1:
-                
-                print(f" Cambiando de MODO 1 a MODO {modo_recibido}")
-                return  # Salir del modo seguimiento
-            
-            # Procesar sensores y control PID
+                t0 = time.time()
+                confirmado = True
+                while time.time() - t0 < 0.05:
+                    d2 = data_receiver.read_data()
+                    if d2 is None:
+                        continue
+                    if int(data_receiver.get_control_data_array()[1]) != modo_recibido:
+                        confirmado = False
+                        break
+                if confirmado:
+                    print(f" Cambiando de MODO 1 a MODO {modo_recibido}")
+                    return
+
+            # v5: adquisición + limitar variación
             distancias = data_receiver.get_distances_array()
+            
+            # Verificar si hay valores NaN en las distancias
+            hay_nan = any(np.isnan(d) for d in distancias)
+            
+            if hay_nan:
+                # Manejo de modo fallback cuando hay NaN
+                tiempo_actual = time.time()
+                
+                if not en_modo_fallback:
+                    # Primera detección de NaN
+                    primer_nan_tiempo = tiempo_actual
+                    en_modo_fallback = True
+                    print("[SEGUIMIENTO] NaN detectado - Activando modo fallback")
+                
+                tiempo_transcurrido = tiempo_actual - (primer_nan_tiempo or tiempo_actual)
+                
+                if tiempo_transcurrido > TIMEOUT_FALLBACK:
+                    # Más de 1 segundo con NaN - detener completamente
+                    print("[SEGUIMIENTO] Timeout fallback alcanzado - Deteniendo motores")
+                    pwm_manager.detener()
+                else:
+                    # Dentro del tiempo límite - usar lógica fallback
+                    if ultima_distancia_valida < DISTANCIA_FALLBACK:
+                        # Distancia menor a umbral - no moverse
+                        print(f"[SEGUIMIENTO] Fallback: Distancia {ultima_distancia_valida:.1f} < {DISTANCIA_FALLBACK} - No moverse")
+                        pwm_manager.detener()
+                    else:
+                        # Distancia mayor a umbral - moverse hacia última posición conocida
+                        print(f"[SEGUIMIENTO] Fallback: Moviéndose hacia última posición (dist={ultima_distancia_valida:.1f}, ang={ultimo_angulo_valido:.1f})")
+                        
+                        # Calcular velocidades usando último ángulo conocido
+                        if abs(ultimo_angulo_valido) > UMBRAL:
+                            correccion_fallback = ultimo_angulo_valido
+                        else:
+                            correccion_fallback = 0
+                        
+                        vel_izq, vel_der, _ = calcular_velocidades_diferenciales(
+                            v_lineal=VELOCIDAD_FALLBACK, angulo_relativo=correccion_fallback, max_v=VELOCIDAD_MAXIMA)
+                        pwm_manager.enviar_pwm(vel_izq, vel_der)
+                
+                # Saltar el resto del procesamiento normal
+                if TIEMPO_ESPERA:
+                    sleep(TIEMPO_ESPERA)
+                continue
+            else:
+                # Datos válidos - salir del modo fallback si estaba activo
+                if en_modo_fallback:
+                    print("[SEGUIMIENTO] Señal recuperada - Saliendo del modo fallback")
+                    en_modo_fallback = False
+                    primer_nan_tiempo = None
             
             if distancias_previas is not None:
                 distancias = limitar_variacion(distancias, distancias_previas, max_delta=MAX_DELTA)
             distancias_previas = distancias.copy()
-            
+
+            # media móvil y kalman (v5)
             distancias_media = media_movil.actualizar(distancias)
             distancias_kalman = kalman.filtrar(distancias_media)
-            
-            # Trilateración y control PID
+
+            # trilateración y ángulo (v5)
             pos_tag3d_kalman = trilateracion_3d(np.array(SENSOR_POSICIONES), distancias_kalman)
             angulo_actual = angulo_direccion_xy(pos_tag3d_kalman)
             angulo_desenrollado = desenrollar_angulo(angulo_anterior, angulo_actual)
             angulo_relativo = limitar_cambio(angulo_anterior, angulo_desenrollado, max_delta=MAX_DELTA)
             angulo_anterior = angulo_relativo
             
-            # Control PID de ángulo
+            # Guardar último ángulo válido para fallback
+            ultimo_angulo_valido = angulo_relativo
+
+            # PID ángulo con umbral (v5)
             if debe_corregir(angulo_relativo, umbral=UMBRAL):
                 correccion = pid.update(angulo_relativo)
             else:
                 correccion = 0
-            
-            # Control PID de distancia
+
+            # PID distancia y selección de velocidad objetivo (v5)
             distancia_al_tag = (distancias_kalman[0] + distancias_kalman[1]) / 2.0
+            
+            # Guardar última distancia válida para fallback
+            ultima_distancia_valida = distancia_al_tag
+            
             velocidad_pid = pid_distancia.update(distancia_al_tag)
             error_distancia = distancia_al_tag - DISTANCIA_OBJETIVO
-            
             if abs(error_distancia) > 200:
                 if error_distancia > 0:
                     velocidad_objetivo = int(np.clip(abs(velocidad_pid), 10, VELOCIDAD_MAXIMA))
@@ -192,20 +263,19 @@ def ejecutar_modo_seguimiento(data_receiver, motor_controller, pwm_manager, cont
                     velocidad_objetivo = 0
             else:
                 velocidad_objetivo = 0
-            
+
+            # suavizado de aceleración (v5)
             velocidad_actual = suavizar_velocidad(velocidad_actual, velocidad_objetivo, aceleracion_maxima=ACELERACION_MAXIMA)
             velocidad_avance = int(velocidad_actual)
-            
-            # Enviar comandos a motores
+
+            # enviar PWM como v5
             if velocidad_avance > 0.0:
-                vel_izq, vel_der, giro_normalizado = calcular_velocidades_diferenciales(
+                vel_izq, vel_der, _ = calcular_velocidades_diferenciales(
                     v_lineal=velocidad_avance, angulo_relativo=correccion, max_v=VELOCIDAD_MAXIMA)
                 pwm_manager.enviar_pwm(vel_izq, vel_der)
             else:
                 pwm_manager.detener()
-        else:
-            pass
-            
+
         if TIEMPO_ESPERA:
             sleep(TIEMPO_ESPERA)
 
@@ -227,11 +297,21 @@ def ejecutar_modo_pausa(data_receiver, motor_controller, pwm_manager, control_mo
             control_data = data_receiver.get_control_data_array()
             modo_recibido = int(control_data[1])
             
-            # Cambio inmediato si corresponde
+            # Cambio de modo con pequeña confirmación
             if  es_modo_valido(modo_recibido) and modo_recibido != 2:
-                
-                print(f" Cambiando de MODO 2 a MODO {modo_recibido}")
-                return
+                t0 = time.time()
+                confirmado = True
+                while time.time() - t0 < 0.05:
+                    d2 = data_receiver.read_data()
+                    if d2 is None:
+                        continue
+                    modo2 = int(data_receiver.get_control_data_array()[1])
+                    if modo2 != modo_recibido:
+                        confirmado = False
+                        break
+                if confirmado:
+                    print(f" Cambiando de MODO 2 a MODO {modo_recibido}")
+                    return
             
             # Procesar sensores (mismo que seguimiento) pero SIN mover motores
             distancias = data_receiver.get_distances_array()
@@ -272,9 +352,19 @@ def ejecutar_modo_manual(data_receiver, motor_controller, pwm_manager, control_m
             modo_recibido = int(control_data[1])
 
             if es_modo_valido(modo_recibido) and modo_recibido != 3:
-                
-                print(f" Cambiando de MODO 3 a MODO {modo_recibido}")
-                return
+                t0 = time.time()
+                confirmado = True
+                while time.time() - t0 < 0.05:
+                    d2 = data_receiver.read_data()
+                    if d2 is None:
+                        continue
+                    modo2 = int(data_receiver.get_control_data_array()[1])
+                    if modo2 != modo_recibido:
+                        confirmado = False
+                        break
+                if confirmado:
+                    print(f" Cambiando de MODO 3 a MODO {modo_recibido}")
+                    return
 
             # Control manual con joystick (valor único 0-7)
             joy_valor = data_receiver.get_joystick_as_int()
@@ -347,14 +437,21 @@ def main():
         data = data_receiver.read_data()
         
         if data is not None:
-            
-            
-            # Obtener modo actual
+            # Obtener modo actual con breve confirmación para robustez
             control_data = data_receiver.get_control_data_array()  # [BAT_TAG, MODO]
             modo_recibido = int(control_data[1])
+            t0 = time.time()
+            estable = True
+            while time.time() - t0 < 0.03:  # ~30 ms
+                d2 = data_receiver.read_data()
+                if d2 is None:
+                    continue
+                if int(data_receiver.get_control_data_array()[1]) != modo_recibido:
+                    estable = False
+                    break
             
             # VALIDAR EL MODO ANTES DE USARLO
-            if not es_modo_valido(modo_recibido):
+            if not es_modo_valido(modo_recibido) or not estable:
                 contador_errores_consecutivos += 1
                 
                 if contador_errores_consecutivos >= max_errores_consecutivos:
@@ -440,7 +537,7 @@ def main():
                     else:
                         t = TILT_TURN_SIGN * pitch
                     # Mapear inclinación directamente a PWM -255..255 con f,t
-                    vL, vR = tilt_to_pwm(f, t, dead=10, max_tilt=50.0, max_pwm=VELOCIDAD_MANUAL)
+                    vL, vR = tilt_to_pwm(f, t, dead=10, max_tilt=30.0, max_pwm=VELOCIDAD_MANUAL)
                     pwm_manager.enviar_pwm(vL, vR)
                     # Debug ocasional
                     now = time.time()
@@ -459,6 +556,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

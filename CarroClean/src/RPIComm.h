@@ -45,5 +45,8 @@ void RPiComm_sendRawUWBDataWithTAG(float distances[3], bool anchor_status[3],
 float RPiComm_readBatteryVoltage();
 float RPiComm_readCurrentSensor(int pin);
 bool RPiComm_receiveCommand(MotorCommand &cmd);
+void RPiComm_sendHeartbeat();
 
+// Funciones de utilidad
+void RPiComm_sendJSON(const char* json);
 #endif // RPICOMM_H
