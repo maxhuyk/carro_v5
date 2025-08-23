@@ -40,14 +40,7 @@ from time import sleep
 import numpy as np
 import time
 
-class UARTController:
-    def __init__(self, port):
-        self.port = port  # Aquí podrías inicializar tu objeto real de comunicación
-
-    def send(self, msg):
-        print(f" UART enviado: {msg}")
-        # Lógica real de envío (serial.write, etc.)
-
+    
  
 # Loop principal inicial
 def main():
