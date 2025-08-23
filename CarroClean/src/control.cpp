@@ -1,4 +1,5 @@
 #include "config.h"
+#include "calculos.h"
 #include <Arduino.h>
 
 
@@ -9,43 +10,26 @@ void main() {
     UARTDataReceiver data_receiver(DATA_PORT, BAUDRATE);
     UARTMotorController motor_controller(DATA_PORT, BAUDRATE);
     PWMManager pwm_manager(motor_controller);
-    MediaMovil media_movil(3, MEDIA_MOVIL_VENTANA);
-    SimpleKalman kalman(3, KALMAN_Q, KALMAN_R);
     
-    // Variables para datos de gráfico distancias
-    float tiempos[1000];
-    float distancias_hist[1000][3];
-    float distancias_media_hist[1000][3];
-    float distancias_kalman_hist[1000][3];
-    float postag_hist[1000];
-    unsigned long start_time = millis();
-    float angulos_hist[1000];
-    float tag2d[1000][2];
-    int ciclo = 0;
-    float distancia_s1_hist[1000];
-
-    int N_CICLOS = 100;  // Número de ciclos a graficar
+    // Inicializar media móvil
+    media_movil_init(3, MEDIA_MOVIL_VENTANA);
     
-    if (!data_receiver.connect()) {
-        Serial.printf("Error: No se pudo conectar al receptor de datos en %d\n", DATA_PORT);
-        return;
-    }
+    // Inicializar filtro Kalman
+    kalman_init(3, KALMAN_Q, KALMAN_R);
     
-    if (!motor_controller.connect()) {
-        Serial.printf(" Error: No se pudo conectar al controlador de motores en %d\n", DATA_PORT);
-        data_receiver.disconnect();
-        return;
-    }
+    
     
     // PID para control de ángulo
-    PIDController pid(1.2, 0.01, 0.3, 0.0, PID_ALPHA, PID_SALIDA_MAX, INTEGRAL_MAX);
+    PIDController pid;
+    pid_init(&pid, 1.2, 0.01, 0.3, 0.0, PID_ALPHA, PID_SALIDA_MAX, INTEGRAL_MAX);
     
     // PID para control de distancia (seguimiento a distancia fija)
-    PIDController pid_distancia(PID_DISTANCIA_KP, PID_DISTANCIA_KI, PID_DISTANCIA_KD, 
-                                DISTANCIA_OBJETIVO, PID_DISTANCIA_ALPHA, 
-                                VELOCIDAD_MAXIMA, PID_DISTANCIA_INTEGRAL_MAX);
+    PIDController pid_distancia;
+    pid_init(&pid_distancia, PID_DISTANCIA_KP, PID_DISTANCIA_KI, PID_DISTANCIA_KD, 
+             DISTANCIA_OBJETIVO, PID_DISTANCIA_ALPHA, 
+             VELOCIDAD_MAXIMA, PID_DISTANCIA_INTEGRAL_MAX);
     
-    ciclo = 0;
+    
     float distancias_previas[3] = {0, 0, 0}; // None
     bool distancias_previas_valid = false;
     float angulo_anterior = 0;  // Inicializamos la variable
@@ -64,7 +48,12 @@ void main() {
             
             // Paso 1.5: Limito variación entre ciclos (anti-salto)
             if (distancias_previas_valid) {
-                distancias = limitar_variacion(distancias, distancias_previas, MAX_DELTA);
+                float distancias_limitadas[3];
+                limitar_variacion(distancias, distancias_previas, distancias_limitadas, 3, MAX_DELTA);
+                // Copiar resultado de vuelta a distancias
+                for(int i = 0; i < 3; i++) {
+                    distancias[i] = distancias_limitadas[i];
+                }
             }
 
             // Actualizo distancias_previas para el próximo ciclo
@@ -79,13 +68,15 @@ void main() {
             // ###########################################################
             //distancias_media = media_movil.actualizar(distancias_previas)
             
-            float* distancias_media = media_movil.actualizar(distancias);
+            float distancias_media[3];
+            media_movil_actualizar(distancias, distancias_media);
             //Serial.printf("Las distancias POR MEDIA en mm son: %f,%f,%f\n", distancias_media[0], distancias_media[1], distancias_media[2]);
             
             // ###########################################################
             // PASO 3: FILTRO KALMAN
             // ###########################################################
-            float* distancias_kalman = kalman.filtrar(distancias_media);
+            float distancias_kalman[3];
+            kalman_filtrar(distancias_media, distancias_kalman);
             Serial.printf("Las distancias POR KALMAN en mm son: %.1f,%.1f,%.1f\n", distancias_kalman[0], distancias_kalman[1], distancias_kalman[2]);
             
             // ###########################################################
@@ -106,23 +97,13 @@ void main() {
             // ###########################################################
             // PASO 4: Mediante trilateración obtengo la ubicación del tag
             // ###########################################################
-            float* pos_tag3d = trilateracion_3d(SENSOR_POSICIONES, distancias);
-            float* pos_tag3d_media = trilateracion_3d(SENSOR_POSICIONES, distancias_media);
-            float* pos_tag3d_kalman = trilateracion_3d(SENSOR_POSICIONES, distancias_kalman);
+            float pos_tag3d[3];
+            trilateracion_3d(SENSOR_POSICIONES, distancias, pos_tag3d);
+            float pos_tag3d_media[3];
+            trilateracion_3d(SENSOR_POSICIONES, distancias_media, pos_tag3d_media);
+            float pos_tag3d_kalman[3];
+            trilateracion_3d(SENSOR_POSICIONES, distancias_kalman, pos_tag3d_kalman);
 
-            // ###########################################################
-            // GUARDAR PARA GRAFICAR #####################################
-            // ###########################################################
-            tiempos[ciclo] = (millis() - start_time) / 1000.0; // tiempos.append(time.time() - start_time)
-            for(int i = 0; i < 3; i++) {
-                distancias_hist[ciclo][i] = distancias_previas[i];      // distancias_hist.append(distancias_previas.copy())
-                distancias_media_hist[ciclo][i] = distancias_media[i];  // distancias_media_hist.append(distancias_media.copy())
-                distancias_kalman_hist[ciclo][i] = distancias_kalman[i]; // distancias_kalman_hist.append(distancias_kalman.copy())
-            }
-            postag_hist[ciclo] = pos_tag3d_kalman[1]; // postag_hist.append(pos_tag3d_kalman[1].copy())
-            // posiciones_tag = np.array([[0.0, y, 0.0] for y in postag_hist])
-
-            distancia_s1_hist[ciclo] = distancias_kalman[0]; // distancia_s1_hist.append(distancias_kalman[0])
             
             // ###########################################################
             // PASO 5: Calculo del ángulo a partir de trilateración
@@ -133,7 +114,6 @@ void main() {
             float angulo_desenrollado = desenrollar_angulo(angulo_anterior, angulo_actual); // evita el salto entre -179 y 179
             float angulo_relativo = limitar_cambio(angulo_anterior, angulo_desenrollado, MAX_DELTA);  // Limita los cambios bruscos
             angulo_anterior = angulo_relativo;  // Actualizamos para la próxima iteración
-            angulos_hist[ciclo] = angulo_actual; // Para graficar
             Serial.printf("ÁNGULO : %.2f\n", angulo_relativo);
 
             // ###########################################################
@@ -144,7 +124,7 @@ void main() {
                 // ###########################################################
                 // PASO 7: CCNTROL PID 
                 // ###########################################################
-                correccion = pid.update(angulo_relativo);
+                correccion = pid_update(&pid, angulo_relativo);
                 Serial.printf("PID %.2f\n", correccion);
             } else {
                 //Serial.printf("Corrección ignorada: ángulo de %.2f° está dentro del umbral\n", angulo_relativo);
@@ -160,7 +140,7 @@ void main() {
             float distancia_al_tag = (distancias_kalman[0] + distancias_kalman[1]) / 2.0;
             
             // El PID calcula cuánto debe acelerar/desacelerar para alcanzar la distancia objetivo
-            float velocidad_pid = pid_distancia.update(distancia_al_tag);
+            float velocidad_pid = pid_update(&pid_distancia, distancia_al_tag);
             
             // Lógica correcta del PID:
             // Si error > 0 (lejos): PID da salida NEGATIVA para acercarse
@@ -181,7 +161,7 @@ void main() {
             }
             
             // Aplicar suavizado de velocidad SOLO para arranque y frenado
-            velocidad_actual = suavizar_velocidad(velocidad_actual, velocidad_objetivo, aceleracion_maxima=ACELERACION_MAXIMA);
+            velocidad_actual = suavizar_velocidad(velocidad_actual, velocidad_objetivo, ACELERACION_MAXIMA);
             int velocidad_avance = (int)velocidad_actual;
             
             Serial.printf("Distancia al tag: %.1fmm, Objetivo: %.1fmm\n", distancia_al_tag, (float)DISTANCIA_OBJETIVO);

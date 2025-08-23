@@ -28,12 +28,8 @@ from src.utils.auxiliares.limitador_distancia import limitar_variacion
 from src.utils.auxiliares.control_diferencial import calcular_velocidades_diferenciales
 from src.utils.auxiliares.validador import debe_corregir
 from src.utils.auxiliares.limite_aceleracion import suavizar_velocidad
-#from src.utils.auxiliares.limitar_tag_y import limitar_variacion_y
 from src.utils.controladores.pid_controller import PIDController
 from src.utils.controladores.pwm_manager import PWMManager
-from src.utils.controladores.pwm_manager import velocidad_a_pwm   
-from src.utils.graficadores.distancias import graficar_distancias, graficar_distancia_sensor1
-from src.utils.graficadores.angulo import graficar_angulos
 from src.utils.controladores.uart_motor_controller import UARTMotorController
 
 from time import sleep
