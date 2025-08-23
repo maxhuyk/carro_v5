@@ -459,7 +459,7 @@ void dw3000Task(void* parameter) {
                             if (!local_carro_detected) {
                                 Serial.println("[DW3000-Core0] CARRO detectado!");
                                 local_carro_detected = true;
-                                delay(100); // Delay después de detectar el carro
+                                //delay(100); // Delay después de detectar el carro
                             }
                             last_anchor_communication = millis();
                             curr_stage = 1;

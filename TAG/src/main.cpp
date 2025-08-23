@@ -3,7 +3,6 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <Wire.h>
-#include <SparkFun_BNO080_Arduino_Library.h>
 #include <math.h>
 
 // Configuración de botones
@@ -38,6 +37,8 @@ typedef struct {
     float quatK;
     float quatReal;
     uint8_t quatAccuracy;       // 0..3
+    uint8_t bnoStability;       // Estado de estabilidad del BNO080
+    uint32_t stepCount;         // Conteo de pasos
 } __attribute__((packed)) EspNowData;
 
 EspNowData espNowData;
@@ -100,24 +101,9 @@ SemaphoreHandle_t dw3000Semaphore = NULL;
 // Handle de la tarea DW3000
 TaskHandle_t dw3000TaskHandle = NULL;
 
-// BNO080 (SparkFun) - IMU 9DoF
-BNO080 bno;
-bool bnoReady = false;
-unsigned long lastBNOPrint = 0;
-bool bnoMute = false; // true = no imprimir más IMU tras calibrar/guardar
-// Control por inclinación: baseline y salidas proporcionales
-static bool tiltBaselineSet = false;
-static float tiltZeroPitchDeg = 0.0f;
-static float tiltZeroRollDeg  = 0.0f;
-uint8_t motorL = 127; // 0..255 (127 = neutro)
-uint8_t motorR = 127; // 0..255 (127 = neutro)
-// Estado de calibración BNO080
-bool bnoCalibEnabled = false;
-bool bnoDCDSaved = false;
-unsigned long bnoLastCalibQuery = 0;
-const unsigned long BNO_CALIB_QUERY_INTERVAL_MS = 500; // consulta estado cada 500ms
-
-// Cache de cuaterniones para envío periódico (se actualiza cuando hay nuevos datos)
+// IMU removida: mantener valores por defecto para compatibilidad de payload
+static uint8_t bnoStability = 0; // estabilidad (fijo)
+static uint32_t bnoSteps = 0;    // pasos (fijo)
 static float lastQuatI = 0.0f;
 static float lastQuatJ = 0.0f;
 static float lastQuatK = 0.0f;
@@ -265,8 +251,8 @@ void processModeChanges() {
         currentMode = MODE_TILT;
         Serial.println("[MODE] Cambiado a TILT (inclinación)");
     // Resetear baseline y salidas al entrar en TILT
-    tiltBaselineSet = false;
-    motorL = motorR = 127;
+    //tiltBaselineSet = false;
+    //motorL = motorR = 127;
         resetButtonsAfterModeChange();
     }
     
@@ -301,7 +287,7 @@ void processModeChanges() {
 void calculateJoystickValue() {
     // Reset por defecto
     joystickValue = 0;
-    motorL = motorR = 127;
+    //motorL = motorR = 127;
 
     // Solo calcular joystick en modo MANUAL
     if (currentMode != MODE_MANUAL) { return; }
@@ -567,33 +553,7 @@ void setup() {
     digitalWrite(5, LOW);
     Serial.begin(500000);
     
-    Wire.begin();
-    delay(100); //  Wait for BNO to boot
-  // Start i2c and BNO080
-    Wire.flush();   // Reset I2C
-    bno.begin(BNO080_DEFAULT_ADDRESS, Wire);
-    Wire.begin(21, 22);
-    //    Wire.setClockStretchLimit(4000); // Not available on ESP32
-    if (bno.begin() == false)
-    {
-        Serial.println("BNO080 not detected at default I2C address. Check your jumpers and the hookup guide. Freezing...");
-        while (1);
-    }
-
-    Wire.setClock(100000); //Increase I2C data rate to 400kHz
-    Wire.setTimeout(50 / portTICK_PERIOD_MS); // 50 ms de espera
-    // Habilitar calibración dinámica de todos los sensores
-    bno.calibrateAll();
-
-    bno.enableRotationVector(50);  // quat
-      
-    
-
-    
-
-    Serial.println(F("LinearAccelerometer enabled, Output in form x, y, z, accuracy, in m/s^2"));
-    Serial.println(F("Gyro enabled, Output in form x, y, z, accuracy, in radians per second"));
-    Serial.println(F("Rotation vector, Output in form i, j, k, real, accuracy"));
+    // IMU removida: no inicializar BNO080
 
     // Blink de arranque
     digitalWrite(5, HIGH); delay(100); digitalWrite(5, LOW); delay(100); 
@@ -652,161 +612,12 @@ void setup() {
         Serial.printf("[TAG] ERROR: No se pudo crear tarea DW3000 (error %d)\n", result);
     }
 
-    Serial.println("[TAG] Setup completado - Core 1 listo para otras tareas");
+    Serial.println("[TAG] Setup completado - Core 1 listo para otras tareas (sin IMU)");
 
     
-}
-//Given an accuracy number, print what it means
-void printAccuracyLevel(byte accuracyNumber)
-{
-  if (accuracyNumber == 0) Serial.print(F("Unreliable"));
-  else if (accuracyNumber == 1) Serial.print(F("Low"));
-  else if (accuracyNumber == 2) Serial.print(F("Medium"));
-  else if (accuracyNumber == 3) Serial.print(F("High"));
 }
 void loop() {
-    // === CORE 1 - Tareas de monitoreo y control ===
-    // Activar streams como en el ejemplo (una sola vez) sin tocar setup
-    static bool imuStreamsEnabledOnce = false;
-    if (!imuStreamsEnabledOnce) {
-        // Habilita Game Rotation Vector y Magnetómetro como en el ejemplo
-        bno.enableGameRotationVector(100);
-        bno.enableMagnetometer(100);
-    bnoReady = true; // IMU lista para uso en TILT
-        Serial.println(F("Calibrating. Press 's' to save to flash"));
-        Serial.println(F("Output in form x, y, z, in uTesla"));
-        imuStreamsEnabledOnce = true;
-    }
-
-    // Teclas de control de calibración/quieto
-    if (Serial.available()) {
-        byte incoming = Serial.read();
-        if (incoming == 's') {
-            bno.saveCalibration();
-            bno.requestCalibrationStatus();
-            int counter = 100; // ~100ms
-            while (true) {
-                if (--counter == 0) break;
-                if (bno.dataAvailable() == true) {
-                    if (bno.calibrationComplete() == true) {
-                        Serial.println("Calibration data successfully stored");
-                        delay(1000);
-                        // Silenciar salidas y deshabilitar streams para no ver más datos
-                        bno.enableGameRotationVector(0); // 0 suele deshabilitar el reporte
-                        bno.enableMagnetometer(0);
-                        bnoMute = true;
-                        Serial.println("[BNO080] Salidas silenciadas. Presiona 'c' para recalibrar cuando quieras.");
-                        break;
-                    }
-                }
-                delay(1);
-            }
-            if (counter == 0) {
-                Serial.println("Calibration data failed to store. Please try again.");
-            }
-        } else if (incoming == 'c') {
-            // Re-entrar a modo calibración y reactivar streams
-            bno.enableGameRotationVector(100);
-            bno.enableMagnetometer(100);
-            bnoMute = false;
-            Serial.println(F("[BNO080] Modo calibración reactivado (imprimiendo de nuevo)"));
-        }
-    }
-    // Gestión manual de guardado DCD
-    if (Serial.available()) {
-        char c = (char)Serial.read();
-        if (c == 's' ) {
-            bno.saveCalibration();
-            bno.requestCalibrationStatus();
-            Serial.println(F("[BNO080] Solicitud de guardado de calibración (DCD) enviada"));
-        }
-    }
-    // Calibración condicional no bloqueante
-    auto bnoCalibrationStep = [&]() {
-        if (!bnoReady) return;
-        // Procesa paquete si hay
-        bool hasData = bno.dataAvailable();
-        // Obtener accuracy disponibles
-        uint8_t quatAcc = bno.getQuatAccuracy();
-        uint8_t magAcc = bno.getMagAccuracy(); // válido si mag está habilitado
-
-        // Si accuracy es baja, habilitar calibración dinámica
-        if (!bnoCalibEnabled && (quatAcc < 2 || magAcc < 2)) {
-            bno.calibrateAll();
-            bnoCalibEnabled = true;
-            bnoDCDSaved = false;
-            Serial.println(F("[BNO080] Calibración dinámica activada (accuracy baja)"));
-        }
-
-        // Cuando logramos precisión Media/Alta, guardar DCD una sola vez
-        if (bnoCalibEnabled && !bnoDCDSaved && quatAcc >= 2 && magAcc >= 2) {
-            unsigned long now = millis();
-            if (now - bnoLastCalibQuery > BNO_CALIB_QUERY_INTERVAL_MS) {
-                bno.saveCalibration();
-                bno.requestCalibrationStatus();
-                bnoLastCalibQuery = now;
-                Serial.println(F("[BNO080] Guardando calibración (DCD) y consultando estado..."));
-            }
-            // La librería actualiza el estado en dataAvailable() -> parseCommandReport
-            // Usa calibrationComplete() para saber si fue OK
-            if (hasData && bno.calibrationComplete()) {
-                bnoDCDSaved = true;
-                bnoCalibEnabled = false; // mantener dinámica activa internamente, pero cerrar este ciclo
-                Serial.println(F("[BNO080] Calibración almacenada correctamente"));
-            }
-        }
-    };
-    bnoCalibrationStep();
-    
-    // Salida de datos como en el ejemplo (silenciada si bnoMute=true)
-    if (bno.dataAvailable() == true)
-    {
-        float x = bno.getMagX();
-        float y = bno.getMagY();
-        float z = bno.getMagZ();
-        byte accuracy = bno.getMagAccuracy();
-
-        float quatI = bno.getQuatI();
-        float quatJ = bno.getQuatJ();
-        float quatK = bno.getQuatK();
-        float quatReal = bno.getQuatReal();
-        byte sensorAccuracy = bno.getQuatAccuracy();
-
-        // Actualizar cache para envío por ESP-NOW
-        lastQuatI = quatI;
-        lastQuatJ = quatJ;
-        lastQuatK = quatK;
-        lastQuatReal = quatReal;
-        lastQuatAccuracy = sensorAccuracy;
-
-        if (!bnoMute) {
-            Serial.print(x, 2);
-            Serial.print(F(","));
-            Serial.print(y, 2);
-            Serial.print(F(","));
-            Serial.print(z, 2);
-            Serial.print(F(","));
-            printAccuracyLevel(accuracy);
-            Serial.print(F(","));
-
-            Serial.print("\t");
-
-            Serial.print(quatI, 2);
-            Serial.print(F(","));
-            Serial.print(quatJ, 2);
-            Serial.print(F(","));
-            Serial.print(quatK, 2);
-            Serial.print(F(","));
-            Serial.print(quatReal, 2);
-            Serial.print(F(","));
-            printAccuracyLevel(sensorAccuracy);
-            Serial.print(F(","));
-
-            Serial.println();
-        }
-    }
-    
-        
+    // === CORE 1 - Tareas de monitoreo y control === (IMU eliminada)
     // Leer botones (no bloqueante)
     readButtons();
     
@@ -834,7 +645,7 @@ void loop() {
         lastBatteryRead = currentTime;
     }
     
-    // Enviar datos por ESP-NOW a 20Hz
+    // Enviar datos por ESP-NOW a 20Hz (sin IMU)
     if (currentTime - lastESPNowSend >= espNowInterval) {
         // Actualizar datos ESP-NOW
         espNowData.batteryVoltage_mV = (uint16_t)(current_battery_voltage * 1000.0);
@@ -842,27 +653,28 @@ void loop() {
     // No enviar joystick en TILT (forzar 0). En MANUAL se envía el valor calculado.
     espNowData.joystick = (currentMode == MODE_TILT) ? 0 : joystickValue;
     espNowData.timestamp = currentTime;
-    // Adjuntar última orientación (quaternion)
+    // Adjuntar orientación por defecto (sin IMU)
     espNowData.quatI = lastQuatI;
     espNowData.quatJ = lastQuatJ;
     espNowData.quatK = lastQuatK;
     espNowData.quatReal = lastQuatReal;
     espNowData.quatAccuracy = lastQuatAccuracy;
-        
-        // Enviar datos con verificación mejorada
-        esp_err_t result = esp_now_send(carroMacAddress, (uint8_t*)&espNowData, sizeof(espNowData));
+    // Estabilidad y pasos por defecto
+    espNowData.bnoStability = bnoStability;
+    espNowData.stepCount = bnoSteps;
+    esp_err_t result = esp_now_send(carroMacAddress, (uint8_t*)&espNowData, sizeof(espNowData));
         
         // Mostrar resultado detallado
         static int consecutive_errors = 0;
-        if (result == ESP_OK) {
+    if (result == ESP_OK) {
             consecutive_errors = 0;
             // Solo mostrar éxitos ocasionalmente para no saturar consola
             static int success_count = 0;
             if (++success_count % 40 == 0) { // Cada 2 segundos (40 * 50ms)
                 const char* modeNames[] = {"APAGADO", "SEGUIMIENTO", "PAUSA", "MANUAL", "TILT"};
                 const char* modeName = (currentMode <= 4) ? modeNames[currentMode] : "?";
-                Serial.printf("[ESP-NOW] OK: Batería=%.2fV, Modo=%s, Joystick=%d\n", 
-                              current_battery_voltage, modeName, joystickValue);
+        Serial.printf("[ESP-NOW] OK: Batería=%.2fV, Modo=%s, J=%d, Steps=%lu, Stability=%u\n", 
+                  current_battery_voltage, modeName, joystickValue, (unsigned long)bnoSteps, bnoStability);
             }
         } else {
             consecutive_errors++;
