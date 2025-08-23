@@ -6,6 +6,20 @@
 #include <SparkFun_BNO080_Arduino_Library.h>
 #include <math.h>
 
+// --- Utilidad de escaneo I2C para diagnosticar BNO080 ---
+static void scanI2C(TwoWire &wire) {
+    Serial.println("[I2C] Escaneando bus...");
+    uint8_t found = 0;
+    for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
+        wire.beginTransmission(addr);
+        if (wire.endTransmission() == 0) {
+            Serial.printf("[I2C] Dispositivo encontrado en 0x%02X\n", addr);
+            found++;
+        }
+    }
+    if (!found) Serial.println("[I2C] Ningún dispositivo detectado");
+}
+
 // Configuración de botones
 #define BTN_RIGHT  35
 #define BTN_LEFT   39
@@ -24,8 +38,9 @@
 
 // ESP-NOW Configuration
 // MAC Address del Carro (reemplazar con la MAC real del Carro)
-uint8_t carroMacAddress[] = {0x00, 0x4B, 0x12, 0x32, 0x8E, 0xFC}; // Placeholder - cambiar por MAC real
-
+uint8_t carroMacAddress[] = {0x68, 0x25, 0xDD, 0x20, 0x14, 0x18}; // Placeholder - cambiar por MAC real
+// mac del otro esp32  68:25:DD:20:14:18
+//0x00, 0x4B, 0x12, 0x32, 0x8E, 0xFC
 // Estructura de datos para ESP-NOW (optimizada para tamaño)
 typedef struct {
     uint16_t batteryVoltage_mV; // Voltaje en milivoltios (0-65535 mV = 0-65.535V)
@@ -104,7 +119,9 @@ TaskHandle_t dw3000TaskHandle = NULL;
 
 // BNO080 (SparkFun) - IMU 9DoF
 BNO080 bno;
-bool bnoReady = false;
+bool bnoReady = false;          // Streams activos
+bool bnoAvailable = false;      // IMU detectada
+uint8_t bnoAddressInUse = 0;    // Dirección que respondió
 unsigned long lastBNOPrint = 0;
 bool bnoMute = false; // true = no imprimir más IMU tras calibrar/guardar
 // Control por inclinación: baseline y salidas proporcionales
@@ -219,14 +236,10 @@ void readButtons() {
 // Función para procesar cambios de modo
 void processModeChanges() {
     unsigned long now = millis();
-    // Ventana de guardia para evitar rebotes de modo (misma pulsación causando ida y vuelta)
-    if (now - lastModeChangeTime < MODE_CHANGE_GUARD_MS) {
-        return;
-    }
+    if (now - lastModeChangeTime < MODE_CHANGE_GUARD_MS) return;
 
     auto resetButtonsAfterModeChange = [&](){
         lastModeChangeTime = now;
-        // Limpiar edges y long-press para no re-disparar con la misma pulsación
         for (int i = 0; i < 5; i++) {
             buttons[i].previousStable = buttons[i].stable;
             buttons[i].rising = false;
@@ -237,65 +250,59 @@ void processModeChanges() {
         }
     };
 
-    // OK presionado largo
+    // OK long press: OFF -> TRACKING, others -> OFF
     if (buttons[BTN_IDX_OK].longPressFired) {
-        // Consumir el evento hasta próxima pulsación
         buttons[BTN_IDX_OK].longPressFired = false;
-
         if (currentMode == MODE_OFF) {
             currentMode = MODE_TRACKING;
             Serial.println("[MODE] Cambiado a SEGUIMIENTO");
-            resetButtonsAfterModeChange();
         } else if (currentMode == MODE_MANUAL) {
             currentMode = MODE_OFF;
             Serial.println("[MODE] Cambiado a APAGADO");
-            resetButtonsAfterModeChange();
         } else {
             currentMode = MODE_OFF;
             Serial.println("[MODE] Cambiado a APAGADO");
-            resetButtonsAfterModeChange();
         }
+        resetButtonsAfterModeChange();
     }
 
-    // UP presionado largo (cualquier modo -> MANUAL)
+    // UP long press -> MANUAL
     if (buttons[BTN_IDX_UP].longPressFired) {
-        buttons[BTN_IDX_UP].longPressFired = false; // consumir
+        buttons[BTN_IDX_UP].longPressFired = false;
         currentMode = MODE_MANUAL;
         Serial.println("[MODE] Cambiado a MANUAL");
         resetButtonsAfterModeChange();
     }
 
-    // LEFT presionado largo (cualquier modo -> TILT)
+    // LEFT long press -> TILT (solo si IMU disponible)
     if (buttons[BTN_IDX_LEFT].longPressFired) {
-        buttons[BTN_IDX_LEFT].longPressFired = false; // consumir
-        currentMode = MODE_TILT;
-        Serial.println("[MODE] Cambiado a TILT (inclinación)");
-    // Resetear baseline y salidas al entrar en TILT
-    tiltBaselineSet = false;
-    motorL = motorR = 127;
+        buttons[BTN_IDX_LEFT].longPressFired = false;
+        if (bnoAvailable) {
+            currentMode = MODE_TILT;
+            Serial.println("[MODE] Cambiado a TILT (inclinación)");
+            tiltBaselineSet = false;
+            motorL = motorR = 127;
+        } else {
+            Serial.println("[MODE] TILT NO disponible (BNO080 ausente)");
+        }
         resetButtonsAfterModeChange();
     }
 
-    // DOWN rising (TRACKING -> PAUSE)
-    if (buttons[BTN_IDX_DOWN].rising) {
-        if (currentMode == MODE_TRACKING) {
-            currentMode = MODE_PAUSE;
-            Serial.println("[MODE] Cambiado a PAUSA");
-            resetButtonsAfterModeChange();
-            return; // evitar que el mismo ciclo procese salida de PAUSA
-        }
+    // DOWN rising: TRACKING -> PAUSE
+    if (buttons[BTN_IDX_DOWN].rising && currentMode == MODE_TRACKING) {
+        currentMode = MODE_PAUSE;
+        Serial.println("[MODE] Cambiado a PAUSA");
+        resetButtonsAfterModeChange();
+        return;
     }
 
-    // Cualquier botón en PAUSE -> TRACKING
+    // Any button rising in PAUSE -> TRACKING
     if (currentMode == MODE_PAUSE) {
-        bool anyButtonPressed = false;
+        bool any = false;
         for (int i = 0; i < 5; i++) {
-            if (buttons[i].rising) {
-                anyButtonPressed = true;
-                break;
-            }
+            if (buttons[i].rising) { any = true; break; }
         }
-        if (anyButtonPressed) {
+        if (any) {
             currentMode = MODE_TRACKING;
             Serial.println("[MODE] Cambiado a SEGUIMIENTO (desde pausa)");
             resetButtonsAfterModeChange();
@@ -324,25 +331,27 @@ void calculateJoystickValue() {
         return;
     }
 
-    // Nuevo mapeo: 0 = nada; 1..8 = direcciones
+    // Mapeo CORREGIDO según lógica Python (solo 0-7, SIN caso 8)
     if (up && !left && !right) {
-        joystickValue = 1; // adelante
+        joystickValue = 1; // (0100) adelante
     } else if (up && left) {
-        joystickValue = 2; // adelante-izquierda
+        joystickValue = 2; // (0110) adelante-izquierda
     } else if (!up && !down && left) {
-        joystickValue = 3; // izquierda
+        joystickValue = 3; // (0010) izquierda
     } else if (down && left) {
-        joystickValue = 4; // atrás-izquierda
+        joystickValue = 4; // (0011) atrás-izquierda
     } else if (down && !left && !right) {
-        joystickValue = 5; // atrás
+        joystickValue = 5; // (0001) atrás
     } else if (down && right) {
-        joystickValue = 6; // atrás-derecha
+        joystickValue = 6; // (1001) atrás-derecha
     } else if (!up && !down && right) {
-        joystickValue = 7; // derecha
+        joystickValue = 7; // (1000) derecha
     } else if (up && right) {
-        joystickValue = 8; // adelante-derecha
+        // PROBLEMA: Python NO tiene caso para adelante-derecha
+        // Mapear a adelante simple (caso 1) como fallback
+        joystickValue = 1; // adelante (fallback)
     } else {
-        joystickValue = 0; // sin movimiento
+        joystickValue = 0; // (0000) sin movimiento
     }
 }
 
@@ -360,11 +369,14 @@ void dw3000Task(void* parameter) {
     long long rx = 0;
     long long tx = 0;
     unsigned long last_anchor_communication = 0;
-    unsigned long communication_timeout = 700;
+    unsigned long communication_timeout = 1200; // Aumentado para reducir falsos timeouts
     bool local_carro_detected = false;
     unsigned long local_total_cycles = 0;
     unsigned long local_successful_cycles = 0;
     unsigned long local_timeout_resets = 0;
+    unsigned long last_reset_time = 0;        // Último softReset real
+    int consecutive_timeouts = 0;             // Timeouts seguidos desde última detección válida
+    int consecutive_soft_resets = 0;          // Conteo de softResets para backoff
 
     Serial.println("[DW3000-Core0] Iniciando tarea DW3000...");
 
@@ -411,32 +423,61 @@ void dw3000Task(void* parameter) {
     while (true) {
         // AUTO-DETECCIÓN DEL CARRO
         if (millis() - last_anchor_communication > communication_timeout) {
+            // Timeout de comunicación
+            consecutive_timeouts++;
+            // Solo considerar "desconectado" si antes estaba detectado
             if (local_carro_detected) {
-                Serial.println("[DW3000-Core0] CARRO desconectado - Reinicializando...");    
-                local_carro_detected = false;
-                local_timeout_resets++;
-
-                // Re-inicializar DW3000
-                dw.softReset();
-                delay(100);
-                dw.init();
-                delay(20);
-                dw.setupGPIO();
-                delay(10);
-                dw.configureAsTX();
-                delay(10);
-                dw.clearSystemStatus();
-                delay(5);
-                dw.standardRX();
-
-                curr_stage = 0;
-
-                // Actualizar variables compartidas thread-safe
-                if (xSemaphoreTake(dw3000Semaphore, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    carro_detected = false;
-                    timeout_resets = local_timeout_resets;
-                    xSemaphoreGive(dw3000Semaphore);
+                if (consecutive_timeouts <= 2) {
+                    // Reintento ligero: no soft reset, sólo limpiar y volver a RX
+                    if ((consecutive_timeouts % 1) == 1) {
+                        Serial.println("[DW3000-Core0] Timeout leve -> reintento sin softReset");
+                    }
+                    dw.clearSystemStatus();
+                    dw.standardRX();
+                    curr_stage = 0;
+                } else {
+                    // Soft reset escalonado con backoff mínimo 3s
+                    unsigned long nowMs = millis();
+                    if (nowMs - last_reset_time > 3000) {
+                        Serial.printf("[DW3000-Core0] Timeout %d consecutivo -> softReset\n", consecutive_timeouts);
+                        local_carro_detected = false;
+                        local_timeout_resets++;
+                        dw.softReset();
+                        delay(120);
+                        dw.init();
+                        delay(25);
+                        dw.setupGPIO();
+                        delay(8);
+                        dw.configureAsTX();
+                        delay(8);
+                        dw.clearSystemStatus();
+                        delay(5);
+                        dw.standardRX();
+                        curr_stage = 0;
+                        last_reset_time = nowMs;
+                        consecutive_soft_resets++;
+                        consecutive_timeouts = 0; // reiniciar contador tras softReset
+                        // Ajustar timeout dinámicamente si muchos resets
+                        if (consecutive_soft_resets >= 3 && communication_timeout < 2000) {
+                            communication_timeout += 300; // ampliar ventana
+                            Serial.printf("[DW3000-Core0] Aumentando communication_timeout a %lu ms\n", communication_timeout);
+                        }
+                        if (xSemaphoreTake(dw3000Semaphore, pdMS_TO_TICKS(10)) == pdTRUE) {
+                            carro_detected = false;
+                            timeout_resets = local_timeout_resets;
+                            xSemaphoreGive(dw3000Semaphore);
+                        }
+                    } else {
+                        // Demasiado pronto para otro softReset: sólo reintento ligero
+                        dw.clearSystemStatus();
+                        dw.standardRX();
+                        curr_stage = 0;
+                    }
                 }
+            } else {
+                // No detectado aún: sólo seguir escuchando sin resets agresivos
+                dw.standardRX();
+                curr_stage = 0;
             }
             last_anchor_communication = millis();
         }
@@ -459,7 +500,8 @@ void dw3000Task(void* parameter) {
                             if (!local_carro_detected) {
                                 Serial.println("[DW3000-Core0] CARRO detectado!");
                                 local_carro_detected = true;
-                                //delay(100); // Delay después de detectar el carro
+                                consecutive_timeouts = 0; // reset de contadores
+                                consecutive_soft_resets = 0;
                             }
                             last_anchor_communication = millis();
                             curr_stage = 1;
@@ -574,25 +616,37 @@ void setup() {
     digitalWrite(5, LOW);
     Serial.begin(500000);
 
-    Wire.begin();
-    delay(100); //  Wait for BNO to boot
-  // Start i2c and BNO080
-    Wire.flush();   // Reset I2C
-    bno.begin(BNO080_DEFAULT_ADDRESS, Wire);
     Wire.begin(21, 22);
-    //    Wire.setClockStretchLimit(4000); // Not available on ESP32
-    if (bno.begin() == false)
-    {
-        Serial.println("BNO080 not detected at default I2C address. Check your jumpers and the hookup guide. Freezing...");
-        while (1);
+    delay(200); // mayor espera de power-up
+    Wire.flush();
+    Wire.setClock(400000); // probar 400k (si falla, la librería baja internamente)
+    Wire.setTimeout(50 / portTICK_PERIOD_MS);
+    scanI2C(Wire);
+    uint8_t candidateAddrs[] = {0x4B, 0x4A}; // Direcciones típicas BNO080 / BNO085
+    for (uint8_t attempt = 0; attempt < 3 && !bnoAvailable; ++attempt) {
+        for (uint8_t i = 0; i < sizeof(candidateAddrs); ++i) {
+            uint8_t addr = candidateAddrs[i];
+            Serial.printf("[BNO080] Intento %u addr 0x%02X...\n", attempt + 1, addr);
+            if (bno.begin(addr, Wire)) {
+                bnoAvailable = true;
+                bnoAddressInUse = addr;
+                break;
+            }
+            delay(40);
+        }
     }
-
-    Wire.setClock(100000); //Increase I2C data rate to 400kHz
-    Wire.setTimeout(50 / portTICK_PERIOD_MS); // 50 ms de espera
-    // Habilitar calibración dinámica de todos los sensores
-    bno.calibrateAll();
-
-    bno.enableRotationVector(50);  // quat
+    if (bnoAvailable) {
+        Serial.printf("[BNO080] Detectado en 0x%02X - TILT habilitado\n", bnoAddressInUse);
+        bno.calibrateAll();
+        bno.enableRotationVector(50);
+        bno.enableStabilityClassifier(100);
+        bno.enableStepCounter(200);
+        Serial.println(F("LinearAccelerometer enabled, Output in form x, y, z, accuracy, in m/s^2"));
+        Serial.println(F("Gyro enabled, Output in form x, y, z, accuracy, in radians per second"));
+        Serial.println(F("Rotation vector, Output in form i, j, k, real, accuracy"));
+    } else {
+        Serial.println("[BNO080] NO detectado tras reintentos - TILT deshabilitado (cuaterniones = -1)");
+    }
     // Activar clasificadores adicionales necesarios
     bno.enableStabilityClassifier(100); // estados de estabilidad
     bno.enableStepCounter(200);         // contador de pasos
@@ -678,18 +732,17 @@ void loop() {
     // === CORE 1 - Tareas de monitoreo y control ===
     // Activar streams como en el ejemplo (una sola vez) sin tocar setup
     static bool imuStreamsEnabledOnce = false;
-    if (!imuStreamsEnabledOnce) {
-        // Habilita Game Rotation Vector y Magnetómetro como en el ejemplo
+    if (bnoAvailable && !imuStreamsEnabledOnce) {
         bno.enableGameRotationVector(100);
         bno.enableMagnetometer(100);
-    bnoReady = true; // IMU lista para uso en TILT
+        bnoReady = true; // IMU lista para uso en TILT
         Serial.println(F("Calibrating. Press 's' to save to flash"));
         Serial.println(F("Output in form x, y, z, in uTesla"));
         imuStreamsEnabledOnce = true;
     }
 
     // Teclas de control de calibración/quieto
-    if (Serial.available()) {
+    if (bnoAvailable && Serial.available()) {
         byte incoming = Serial.read();
         if (incoming == 's') {
             bno.saveCalibration();
@@ -723,7 +776,7 @@ void loop() {
         }
     }
     // Gestión manual de guardado DCD
-    if (Serial.available()) {
+    if (bnoAvailable && Serial.available()) {
         char c = (char)Serial.read();
         if (c == 's' ) {
             bno.saveCalibration();
@@ -733,7 +786,7 @@ void loop() {
     }
     // Calibración condicional no bloqueante
     auto bnoCalibrationStep = [&]() {
-        if (!bnoReady) return;
+        if (!bnoAvailable || !bnoReady) return;
         // Procesa paquete si hay
         bool hasData = bno.dataAvailable();
         // Obtener accuracy disponibles
@@ -769,7 +822,7 @@ void loop() {
     bnoCalibrationStep();
 
     // Salida de datos como en el ejemplo (silenciada si bnoMute=true)
-    if (bno.dataAvailable() == true)
+    if (bnoAvailable && bno.dataAvailable() == true)
     {
         float x = bno.getMagX();
         float y = bno.getMagY();
@@ -857,15 +910,24 @@ void loop() {
     espNowData.joystick = (currentMode == MODE_TILT) ? 0 : joystickValue;
     espNowData.timestamp = currentTime;
     // Adjuntar última orientación (quaternion)
-    espNowData.quatI = lastQuatI;
-    espNowData.quatJ = lastQuatJ;
-    espNowData.quatK = lastQuatK;
-    espNowData.quatReal = lastQuatReal;
-    espNowData.quatAccuracy = lastQuatAccuracy;
-        
-    // Incluir estabilidad y pasos en el paquete principal
-    espNowData.bnoStability = bnoStability;
-    espNowData.stepCount = bnoSteps;
+        if (bnoAvailable) {
+            espNowData.quatI = lastQuatI;
+            espNowData.quatJ = lastQuatJ;
+            espNowData.quatK = lastQuatK;
+            espNowData.quatReal = lastQuatReal;
+            espNowData.quatAccuracy = lastQuatAccuracy;
+            espNowData.bnoStability = bnoStability;
+            espNowData.stepCount = bnoSteps;
+        } else {
+            espNowData.quatI = -1.0f;
+            espNowData.quatJ = -1.0f;
+            espNowData.quatK = -1.0f;
+            espNowData.quatReal = -1.0f;
+            espNowData.quatAccuracy = 0;
+            espNowData.bnoStability = 0;
+            espNowData.stepCount = 0;
+            if (currentMode == MODE_TILT) currentMode = MODE_OFF; // seguridad
+        }
 
         // Enviar datos con verificación mejorada
         esp_err_t result = esp_now_send(carroMacAddress, (uint8_t*)&espNowData, sizeof(espNowData));
