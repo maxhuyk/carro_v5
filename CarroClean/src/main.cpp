@@ -6,6 +6,8 @@
 #include <WiFi.h>
 #include "MotorController.h"
 #include "RPiComm.h"
+#include "control.h"
+#include "config.h"
 
 
 
@@ -31,6 +33,18 @@ volatile EspNowData receivedData = {0, 0, 0, 0};
 volatile bool newDataReceived = false;
 volatile unsigned long lastDataReceived = 0;
 volatile unsigned long totalPacketsReceived = 0;
+
+// Variables para el sistema de control en Core 1
+TaskHandle_t controlTaskHandle = NULL;
+CarroData sharedCarroData = {0};
+volatile bool newUWBData = false;
+SemaphoreHandle_t dataMutex = NULL;
+
+// Declaraciones de funciones
+void printControlStatus();
+void updateSharedData(float distances[NUM_ANCHORS], bool anchor_status[NUM_ANCHORS], unsigned long measurement_count);
+void controlTask(void* parameter);
+void motorControlCallback(float velocidad_izq, float velocidad_der);
 
 // Callback para recepción de datos ESP-NOW
 void onDataReceived(const uint8_t * mac, const uint8_t *incomingData, int len) {
@@ -77,6 +91,99 @@ bool initESPNOW() {
     return true;
 }
 
+// Función de callback para el control de motores
+void motorControlCallback(float velocidad_izq, float velocidad_der) {
+    // Enviar velocidades directamente al controlador de motores
+    motor_enviar_pwm(velocidad_izq, velocidad_der);
+}
+
+// Tarea de control que se ejecuta en Core 1
+void controlTask(void* parameter) {
+    Serial.println("[CONTROL] Iniciando tarea de control en Core 1");
+    
+    // Configurar el control de motores directo
+    setupMotorControlDirect();
+    
+    // Inicializar el sistema de control
+    control_init();
+    
+    unsigned long lastControlTime = 0;
+    const unsigned long CONTROL_INTERVAL = 10; // 100Hz para respuesta rápida
+    
+    while (true) {
+        unsigned long currentTime = millis();
+        
+        if (currentTime - lastControlTime >= CONTROL_INTERVAL) {
+            // Copiar datos compartidos de forma segura
+            CarroData localData;
+            if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+                localData = sharedCarroData;
+                xSemaphoreGive(dataMutex);
+            } else {
+                // Si no podemos obtener el mutex, usar datos anteriores
+                vTaskDelay(pdMS_TO_TICKS(1));
+                continue;
+            }
+            
+            // Ejecutar el control principal
+            control_main(&localData, motorControlCallback, [](){motor_enviar_pwm(0, 0);});
+            
+            lastControlTime = currentTime;
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(1)); // Pequeña pausa para no saturar el CPU
+    }
+}
+
+// Función para actualizar los datos compartidos del carro
+void updateSharedData(float distances[NUM_ANCHORS], bool anchor_status[NUM_ANCHORS], unsigned long measurement_count) {
+    if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        // Limpiar estructura
+        memset(&sharedCarroData, 0, sizeof(CarroData));
+        
+        // Actualizar datos de sensores UWB (convertir de cm a mm)
+        for (int i = 0; i < NUM_ANCHORS && i < 3; i++) {
+            sharedCarroData.distancias[i] = anchor_status[i] ? (distances[i] * 10.0) : -1.0; // cm -> mm
+        }
+        
+        // Actualizar datos del TAG si están disponibles
+        bool tagDataValid = (millis() - lastDataReceived) < 1000;
+        if (tagDataValid) {
+            // Calcular yaw desde quaternion del TAG
+            float yaw = atan2(2.0 * (receivedData.quatReal * receivedData.quatK + receivedData.quatI * receivedData.quatJ),
+                             1.0 - 2.0 * (receivedData.quatJ * receivedData.quatJ + receivedData.quatK * receivedData.quatK));
+            yaw = yaw * 180.0 / PI; // Convertir a grados
+            
+            // Llenar datos IMU: [PITCH, ROLL, YAW, MOV, VEL, ACCEL_Z]
+            sharedCarroData.imu_data[0] = 0.0; // PITCH (no disponible)
+            sharedCarroData.imu_data[1] = 0.0; // ROLL (no disponible)
+            sharedCarroData.imu_data[2] = yaw; // YAW
+            sharedCarroData.imu_data[3] = 0.0; // MOV (no disponible)
+            sharedCarroData.imu_data[4] = 0.0; // VEL (no disponible)
+            sharedCarroData.imu_data[5] = 0.0; // ACCEL_Z (no disponible)
+            
+            // Llenar datos de control: [BAT_TAG, MODO]
+            sharedCarroData.control_data[0] = receivedData.batteryVoltage_mV / 1000.0; // BAT_TAG
+            sharedCarroData.control_data[1] = receivedData.modo; // MODO
+            
+            // Llenar datos de botones: [JOY_D, JOY_A, JOY_I, JOY_T]
+            sharedCarroData.buttons_data[0] = receivedData.joystick; // JOY_D (dirección)
+            sharedCarroData.buttons_data[1] = 0.0; // JOY_A (no disponible)
+            sharedCarroData.buttons_data[2] = 0.0; // JOY_I (no disponible)
+            sharedCarroData.buttons_data[3] = 0.0; // JOY_T (no disponible)
+            
+            sharedCarroData.data_valid = true;
+        } else {
+            sharedCarroData.data_valid = false;
+        }
+        
+        // Marcar que hay nuevos datos
+        newUWBData = true;
+        
+        xSemaphoreGive(dataMutex);
+    }
+}
+
 
 void setup() {
   Serial.begin(500000);  // Reducido de 2000000 a 500000 para mejor estabilidad
@@ -105,6 +212,40 @@ void setup() {
   UWBCore_startTask();
   
   setupMotorController();  //setup motores 
+  
+  ///////////////////////////////////////////////////////////////////////
+  //                                                                   //
+  //                         Seccion Control                           //
+  //                                                                   //
+  ///////////////////////////////////////////////////////////////////////
+  
+  // Crear mutex para datos compartidos
+  dataMutex = xSemaphoreCreateMutex();
+  if (dataMutex == NULL) {
+      Serial.println("ERROR: No se pudo crear el mutex para datos compartidos");
+      return;
+  }
+  
+  // Inicializar estructura de datos compartidos
+  memset(&sharedCarroData, 0, sizeof(CarroData));
+  
+  // Crear tarea de control en Core 1
+  xTaskCreatePinnedToCore(
+      controlTask,        // Función de la tarea
+      "ControlTask",      // Nombre de la tarea
+      8192,              // Tamaño del stack (8KB)
+      NULL,              // Parámetros
+      2,                 // Prioridad (mayor que loop)
+      &controlTaskHandle, // Handle de la tarea
+      1                  // Core 1
+  );
+  
+  if (controlTaskHandle == NULL) {
+      Serial.println("ERROR: No se pudo crear la tarea de control");
+      return;
+  }
+  
+  Serial.println("[CONTROL] Sistema de control inicializado en Core 1");
 }
 
 void loop() {
@@ -199,7 +340,10 @@ void loop() {
   ///////////////////////////////////////////////////////////////////////
 
   if (currentCount > lastMeasurementCount) {
-      // Hay nuevas mediciones, enviar a RPi con datos del TAG
+      // Hay nuevas mediciones, actualizar datos compartidos para el sistema de control
+      updateSharedData(distances, anchor_status, currentCount);
+      
+      // Enviar a RPi con datos del TAG
       
   // Verificar si tenemos datos válidos del TAG (menos de 1 segundo de antigüedad)
       bool tagDataValid = (millis() - lastDataReceived) < 1000;
@@ -234,5 +378,36 @@ void loop() {
                         tagDataValid ? "SI" : "NO");
       }
   }
+  
+  // Mostrar estado del sistema de control (cada 10 segundos)
+  printControlStatus();
+}
+
+// Función para mostrar el estado del sistema de control (opcional)
+void printControlStatus() {
+    static unsigned long lastControlStatus = 0;
+    if (millis() - lastControlStatus >= 10000) { // Cada 10 segundos
+        Serial.println("\n========= ESTADO DEL SISTEMA DE CONTROL =========");
+        
+        if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            Serial.printf("[CONTROL] Distancias UWB: S1=%.1fcm, S2=%.1fcm, S3=%.1fcm\n", 
+                         sharedCarroData.distancias[0], sharedCarroData.distancias[1], sharedCarroData.distancias[2]);
+            Serial.printf("[CONTROL] IMU Yaw: %.1f°\n", sharedCarroData.imu_data[2]);
+            Serial.printf("[CONTROL] TAG Batería: %.2fV, Modo: %.0f\n", 
+                         sharedCarroData.control_data[0], sharedCarroData.control_data[1]);
+            Serial.printf("[CONTROL] Joystick: %.0f, Datos válidos: %s\n", 
+                         sharedCarroData.buttons_data[0], sharedCarroData.data_valid ? "SI" : "NO");
+            xSemaphoreGive(dataMutex);
+        } else {
+            Serial.println("[CONTROL] ERROR: No se pudo acceder a datos compartidos");
+        }
+        
+        Serial.printf("[SISTEMA] Tarea de control: %s\n", 
+                     (controlTaskHandle != NULL) ? "ACTIVA" : "INACTIVA");
+        Serial.printf("[SISTEMA] Memoria libre: %d bytes\n", esp_get_free_heap_size());
+        Serial.println("================================================\n");
+        
+        lastControlStatus = millis();
+    }
 }
 

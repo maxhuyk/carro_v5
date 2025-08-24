@@ -20,7 +20,7 @@
 // #################################################################
 // PASO 2: FILTRO DE MEDIA MOVIL
 // #################################################################
-#define MEDIA_MOVIL_VENTANA 2
+#define MEDIA_MOVIL_VENTANA 3
 
 // #################################################################
 // PASO 3: FILTRO KALMAN
@@ -37,17 +37,17 @@
 // #################################################################
 // UMBRAL A PARTIR DEL CUAL SE CORRIGE
 // #################################################################
-#define UMBRAL 10
+#define UMBRAL 10  // Aumentado de 5 a 8 para evitar correcciones constantes
 
 // #################################################################
 // PARÁMETROS DEL CONTROLADOR PID DE ÁNGULO
 // #################################################################
-#define PID_KP 2.0
-#define PID_KI 0.05
-#define PID_KD 1.0
+#define PID_KP 0.7          // Reducido de 1.0 a 0.7 para correcciones más suaves
+#define PID_KI 0.03         // Reducido de 0.08 a 0.03 para evitar oscilaciones
+#define PID_KD 1.5          // Incrementado de 1.0 a 1.2 para mejor estabilidad
 #define PID_SETPOINT 0.0
 #define PID_ALPHA 0.3
-#define PID_SALIDA_MAX 30.0
+#define PID_SALIDA_MAX 50.0 // Reducido de 40.0 a 15.0 para correcciones más suaves
 #define INTEGRAL_MAX 50.0
 
 // #################################################################
@@ -56,22 +56,22 @@
 #define DISTANCIA_OBJETIVO 1500.0  // mm (1.5 metros)
 
 // Parámetros del PID para control de distancia
-#define PID_DISTANCIA_KP 0.2
+#define PID_DISTANCIA_KP 0.1
 #define PID_DISTANCIA_KI 0.03
 #define PID_DISTANCIA_KD 0.08
-#define PID_DISTANCIA_ALPHA 0.7
-#define PID_DISTANCIA_INTEGRAL_MAX 200.0
+#define PID_DISTANCIA_ALPHA 0.5
+#define PID_DISTANCIA_INTEGRAL_MAX 50.0
 
 // #################################################################
 // CONTROL DE VELOCIDAD Y ACELERACIÓN
 // #################################################################
-#define VELOCIDAD_MAXIMA 60
-#define ACELERACION_MAXIMA 3  // Máximo cambio de velocidad por ciclo
+#define VELOCIDAD_MAXIMA 45  // Reducido de 90 a 40 para seguimiento más suave
+#define ACELERACION_MAXIMA 15  // Incrementado de 1 a 10 para respuesta más rápida
 
 // #################################################################
 // CONTROL MANUAL (MODO 3)
 // #################################################################
-#define VELOCIDAD_MANUAL 30
+#define VELOCIDAD_MANUAL 40
 
 // #################################################################
 // CONTROL DE MOVIMIENTO SIN SEÑAL

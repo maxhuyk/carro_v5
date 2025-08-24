@@ -277,8 +277,8 @@ void UWBCore_task(void* parameter) {
 
     while (true) {
         // Delays entre anchors y ritmo global
-        const int inter_anchor_delay_us = 15000; // 15ms entre anchors (MCP23008 necesita holgura)
-        const int cycle_delay_ms = 15;           
+        const int inter_anchor_delay_us = 1000; // 15ms entre anchors (MCP23008 necesita holgura)
+        const int cycle_delay_ms = 1;           
         /*
         Con esta configuracion de delays donde en total suman 45ms se obtiene una frecuencia de 9Hz 
         si se eliminan los delays se podria obtener una frecuencia maxima de 15Hz 

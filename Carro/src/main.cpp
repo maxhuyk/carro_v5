@@ -27,6 +27,122 @@ volatile bool newDataReceived = false;
 volatile unsigned long lastDataReceived = 0;
 volatile unsigned long totalPacketsReceived = 0;
 
+// Variables globales para control de modo
+static uint8_t currentModo = 0;
+static bool modeControlEnabled = true; // Para habilitar/deshabilitar control de modo
+
+// Función para mapear valor de joystick a velocidades de motor
+void processJoystickControl(uint8_t joystick_value) {
+    const int velocidad_manual = 50; // Velocidad fija para modo manual (0-100)
+    
+    int vel_izq = 0;
+    int vel_der = 0;
+    
+    // Mapeo basado en el control.py de la Raspberry
+    switch (joystick_value) {
+        case 0: // (0000) - Sin movimiento
+            vel_izq = 0;
+            vel_der = 0;
+            break;
+            
+        case 1: // (0100) - Solo adelante
+            vel_izq = velocidad_manual;
+            vel_der = velocidad_manual;
+            break;
+            
+        case 2: // (0110) - Adelante + Izquierda
+            vel_izq = velocidad_manual / 2;  // Rueda izquierda más lenta
+            vel_der = velocidad_manual;      // Rueda derecha más rápida
+            break;
+            
+        case 3: // (0010) - Solo izquierda (giro en el lugar)
+            vel_izq = -velocidad_manual / 2; // Rueda izquierda atrás
+            vel_der = velocidad_manual / 2;  // Rueda derecha adelante
+            break;
+            
+        case 4: // (0011) - Izquierda + Atrás
+            vel_izq = -velocidad_manual / 2; // Rueda izquierda reversa lenta
+            vel_der = -velocidad_manual;     // Rueda derecha reversa rápida
+            break;
+            
+        case 5: // (0001) - Solo atrás
+            vel_izq = -velocidad_manual;
+            vel_der = -velocidad_manual;
+            break;
+            
+        case 6: // (1001) - Derecha + Atrás
+            vel_izq = -velocidad_manual;     // Rueda izquierda reversa rápida
+            vel_der = -velocidad_manual / 2; // Rueda derecha reversa lenta
+            break;
+            
+        case 7: // (1000) - Solo derecha (giro en el lugar)
+            vel_izq = velocidad_manual / 2;  // Rueda izquierda adelante
+            vel_der = -velocidad_manual / 2; // Rueda derecha atrás
+            break;
+            
+        default:
+            Serial.printf("[JOYSTICK] Valor inválido: %d, deteniendo motores\n", joystick_value);
+            vel_izq = 0;
+            vel_der = 0;
+            break;
+    }
+    
+    // Aplicar control directo a los motores usando setMotorL/setMotorR
+    bool dir_izq = (vel_izq >= 0);
+    bool dir_der = (vel_der >= 0);
+    int pwm_izq = abs(vel_izq);
+    int pwm_der = abs(vel_der);
+    
+    Serial.printf("[JOYSTICK] Joy=%d -> L=%d(%s), R=%d(%s)\n", 
+                  joystick_value, pwm_izq, dir_izq ? "FWD" : "REV", 
+                  pwm_der, dir_der ? "FWD" : "REV");
+    
+    setMotorL(pwm_izq, dir_izq);
+    setMotorR(pwm_der, dir_der);
+}
+
+// Función para procesar control basado en modo del TAG
+void processTagModeControl(uint8_t modo, uint8_t joystick) {
+    if (!modeControlEnabled) {
+        return; // Control de modo deshabilitado
+    }
+    
+    currentModo = modo;
+    
+    Serial.printf("[MODE_CONTROL] Modo=%d, Joystick=%d\n", modo, joystick);
+    
+    switch (modo) {
+        case 0: // APAGADO
+            Serial.println("[MODE_CONTROL] MODO 0: APAGADO - Deteniendo motores");
+            setMotorL(0, true);
+            setMotorR(0, true);
+            break;
+            
+        case 1: // SEGUIMIENTO (control desde Raspberry Pi)
+            Serial.println("[MODE_CONTROL] MODO 1: SEGUIMIENTO - Control desde RPi");
+            // En modo 1, los motores se controlan desde la Raspberry Pi
+            // No hacer nada aquí, dejar que processSerialCommands() maneje los comandos
+            break;
+            
+        case 2: // PAUSA
+            Serial.println("[MODE_CONTROL] MODO 2: PAUSA - Deteniendo motores");
+            setMotorL(0, true);
+            setMotorR(0, true);
+            break;
+            
+        case 3: // MANUAL (control por joystick)
+            Serial.printf("[MODE_CONTROL] MODO 3: MANUAL - Control por joystick (valor=%d)\n", joystick);
+            processJoystickControl(joystick);
+            break;
+            
+        default:
+            Serial.printf("[MODE_CONTROL] MODO DESCONOCIDO: %d - Deteniendo motores por seguridad\n", modo);
+            setMotorL(0, true);
+            setMotorR(0, true);
+            break;
+    }
+}
+
 // Callback para recepción de datos ESP-NOW
 void onDataReceived(const uint8_t * mac, const uint8_t *incomingData, int len) {
     if (len == sizeof(EspNowData)) {
@@ -119,9 +235,8 @@ void loop() {
         uint8_t tagModo = receivedData.modo;
         uint8_t tagJoystick = receivedData.joystick;
         
-        // Ejemplo: usar los datos recibidos para control del motor o envío a RPi
-        // processTagCommand(tagModo, tagJoystick);
-        // sendTagDataToRPi(tagBatteryVoltage, tagModo, tagJoystick);
+        // Procesar control basado en modo del TAG
+        processTagModeControl(tagModo, tagJoystick);
     }
     
     // Verificar timeout de datos ESP-NOW

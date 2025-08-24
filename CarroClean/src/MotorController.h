@@ -12,3 +12,9 @@ void emergencyStop();
 void disableMotors();
 void setMotorL(int pwm, bool dir);
 void setMotorR(int pwm, bool dir);
+
+// ===== NUEVAS FUNCIONES PARA CONTROL DIRECTO =====
+// Funciones para ser usadas como callbacks desde control.cpp
+void motor_enviar_pwm(int vel_izq, int vel_der);
+void motor_detener();
+void setupMotorControlDirect();

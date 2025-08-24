@@ -6,8 +6,7 @@
 // Pines para los DRV8701 (ambos motores)
 #define ENABLE_MOTORS 14  // Pin único de enable para ambos motores
 #define PWML1 26
-#define PWML2 25
-#define CURRL 36  // SENSOR_VP
+#define PWML2 27
 // Pines para el DRV8701 (motor derecho)
 #define PWMR1 33
 #define PWMR2 32
@@ -26,6 +25,7 @@ static bool motorsEnabled = false;
 static bool pwm_initialized = false;
 static unsigned long lastCommandTime = 0;
 static const unsigned long COMMAND_TIMEOUT = 2000; // 2 segundos
+static bool directControlMode = false; // Nueva variable para modo directo
 
 // Declaración de función
 void executeMotorCommand(const MotorCommand& cmd);
@@ -139,6 +139,11 @@ void setupMotorController() {
 }
 
 void processSerialCommands() {
+    // Si estamos en modo control directo, no procesar comandos de RPi ni timeouts
+    if (directControlMode) {
+        return;
+    }
+    
     MotorCommand cmd;
     
     // Verificar si hay comandos de la Raspberry Pi
@@ -240,5 +245,48 @@ void emergencyStop() {
     RPiComm_sendJSON(output.c_str());
 }
 
-// Lecturas de sensores eliminadas (se usan funciones de RPiComm)
+// Función para control directo desde sistema de control
+void motor_enviar_pwm(int izq, int der) {
+    // ACTUALIZAR lastCommandTime para evitar timeout de 2 segundos
+    lastCommandTime = millis();
+    
+    // Usar executeMotorCommand EXACTAMENTE como el código UART que SÍ funciona
+    // Mapear de 0-100 a 0-255 (como hace el Python)
+    int left_speed = map(izq, 0, 100, 0, 255);
+    int right_speed = map(der, 0, 100, 0, 255);
+    
+    // Crear comando exactamente como el UART
+    MotorCommand cmd;
+    cmd.command_type = 'M';
+    cmd.motor_left_speed = left_speed;
+    cmd.motor_right_speed = right_speed;
+    cmd.emergency_stop = false;
+    
+    Serial.printf("[MOTOR_VIA_EXECUTE] Control(%d,%d) -> UART(%d,%d)\n", 
+                  izq, der, left_speed, right_speed);
+    
+    // Usar la función que SÍ funciona
+    executeMotorCommand(cmd);
+}
+
+void motor_detener() {
+    // ACTUALIZAR lastCommandTime para evitar timeout
+    lastCommandTime = millis();
+    
+    MotorCommand cmd;
+    cmd.command_type = 'M';
+    cmd.motor_left_speed = 0;
+    cmd.motor_right_speed = 0;
+    cmd.emergency_stop = false;
+    
+    executeMotorCommand(cmd);
+    Serial.println("[MOTOR_STOP] Motores detenidos via executeMotorCommand");
+}
+
+void setupMotorControlDirect() {
+    directControlMode = true;
+    Serial.println("[MotorController] Modo directo activado");
+}
+
+
 

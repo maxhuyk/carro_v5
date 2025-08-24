@@ -41,7 +41,7 @@ bool debe_corregir(float angulo, float umbral);
 // Función para suavizar velocidad (control de aceleración)
 float suavizar_velocidad(float velocidad_actual, float velocidad_objetivo, float aceleracion_maxima);
 
-// Estructura para resultado de velocidades diferenciales
+// Estructura para velocidades diferenciales
 struct VelocidadesDiferenciales {
     int vel_izq;
     int vel_der;
@@ -50,5 +50,26 @@ struct VelocidadesDiferenciales {
 
 // Función para calcular velocidades diferenciales
 VelocidadesDiferenciales calcular_velocidades_diferenciales(float v_lineal, float angulo_relativo, float max_v);
+
+// ===== FUNCIONES DE CONTROL PRINCIPAL =====
+
+// Estructura para pasar datos directamente desde main.cpp
+struct CarroData {
+    float distancias[3];        // Distancias UWB [S1, S2, S3]
+    float power_data[3];        // [BAT_C, ML_C, MR_C] 
+    float imu_data[6];          // [PITCH, ROLL, YAW, MOV, VEL, ACCEL_Z]
+    float tag_sensors[3];       // [S1, S2, S3] sensores del tag
+    float control_data[2];      // [BAT_TAG, MODO]
+    float buttons_data[4];      // [JOY_D, JOY_A, JOY_I, JOY_T]
+    bool data_valid;            // Indica si los datos son válidos
+};
+
+// Callbacks para PWM (implementadas en main.cpp)
+typedef void (*PWMCallback)(float vel_izq, float vel_der);
+typedef void (*StopCallback)();
+
+// Funciones del sistema de control
+void control_init();
+void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener);
 
 #endif

@@ -1,50 +1,211 @@
 #include "config.h"
 #include "calculos.h"
+#include "MotorController.h"
+#include "control.h"
 #include <Arduino.h>
 
+// Variables estáticas para mantener estado entre llamadas
+static bool control_initialized = false;
+static PIDController pid;
+static PIDController pid_distancia;
+static float distancias_previas[3] = {0, 0, 0};
+static bool distancias_previas_valid = false;
+static float angulo_anterior = 0;
+static float y_anterior = 0.0;
+static float velocidad_actual = 0;
+static int ciclo = 0;
 
+// Variables para debug de frecuencia
+static unsigned long control_execution_count = 0;
+static unsigned long last_frequency_check = 0;
 
-// Loop principal inicial
-void main() {
-
-    UARTDataReceiver data_receiver(DATA_PORT, BAUDRATE);
-    UARTMotorController motor_controller(DATA_PORT, BAUDRATE);
-    PWMManager pwm_manager(motor_controller);
+// Función para procesar control por joystick (MODO 3)
+void processJoystickControl(uint8_t joystick_value) {
+    const int velocidad_manual = VELOCIDAD_MANUAL; // Usar valor del config.h
     
-    // Inicializar media móvil
+    int vel_izq = 0;
+    int vel_der = 0;
+    
+    // Mapeo basado en el control.py de la Raspberry (valores 0-7)
+    switch (joystick_value) {
+        case 0: // (0000) - Sin movimiento
+            vel_izq = 0;
+            vel_der = 0;
+            break;
+            
+        case 1: // (0100) - Solo adelante
+            vel_izq = velocidad_manual;
+            vel_der = velocidad_manual;
+            break;
+            
+        case 2: // (0110) - Adelante + Izquierda
+            vel_izq = velocidad_manual / 2;  // Rueda izquierda más lenta
+            vel_der = velocidad_manual;      // Rueda derecha más rápida
+            break;
+            
+        case 3: // (0010) - Solo izquierda (giro en el lugar)
+            vel_izq = -velocidad_manual / 2; // Rueda izquierda atrás
+            vel_der = velocidad_manual / 2;  // Rueda derecha adelante
+            break;
+            
+        case 4: // (0011) - Izquierda + Atrás
+            vel_izq = -velocidad_manual / 2; // Rueda izquierda reversa lenta
+            vel_der = -velocidad_manual;     // Rueda derecha reversa rápida
+            break;
+            
+        case 5: // (0001) - Solo atrás
+            vel_izq = -velocidad_manual;
+            vel_der = -velocidad_manual;
+            break;
+            
+        case 6: // (1001) - Derecha + Atrás
+            vel_izq = -velocidad_manual;     // Rueda izquierda reversa rápida
+            vel_der = -velocidad_manual / 2; // Rueda derecha reversa lenta
+            break;
+            
+        case 7: // (1000) - Solo derecha (giro en el lugar)
+            vel_izq = velocidad_manual / 2;  // Rueda izquierda adelante
+            vel_der = -velocidad_manual / 2; // Rueda derecha atrás
+            break;
+            
+        default:
+            Serial.printf("[JOYSTICK] Valor inválido: %d, deteniendo motores\n", joystick_value);
+            vel_izq = 0;
+            vel_der = 0;
+            break;
+    }
+    
+    // Para valores negativos, necesitamos manejar la dirección
+    // motor_enviar_pwm espera valores 0-100, así que convertimos valores negativos
+    int pwm_izq, pwm_der;
+    
+    if (vel_izq >= 0) {
+        pwm_izq = vel_izq;
+    } else {
+        // Para reversa, necesitamos usar valores negativos o una lógica especial
+        // Por ahora, limitamos a solo adelante por seguridad
+        pwm_izq = 0;
+        Serial.println("[JOYSTICK] WARNING: Reversa deshabilitada por seguridad");
+    }
+    
+    if (vel_der >= 0) {
+        pwm_der = vel_der;
+    } else {
+        // Para reversa, necesitamos usar valores negativos o una lógica especial
+        // Por ahora, limitamos a solo adelante por seguridad
+        pwm_der = 0;
+        Serial.println("[JOYSTICK] WARNING: Reversa deshabilitada por seguridad");
+    }
+    
+    Serial.printf("[JOYSTICK] Joy=%d -> L=%d, R=%d\n", joystick_value, pwm_izq, pwm_der);
+    
+    // Enviar comando a los motores
+    motor_enviar_pwm(pwm_izq, pwm_der);
+}
+
+// Función de inicialización del sistema de control
+void control_init() {
+    // Inicializar sistema de control de motores
+    setupMotorControlDirect();
+    
+    // Inicializar filtros
     media_movil_init(3, MEDIA_MOVIL_VENTANA);
-    
-    // Inicializar filtro Kalman
     kalman_init(3, KALMAN_Q, KALMAN_R);
     
-    
-    
-    // PID para control de ángulo
-    PIDController pid;
+    // Inicializar PIDs
     pid_init(&pid, 1.2, 0.01, 0.3, 0.0, PID_ALPHA, PID_SALIDA_MAX, INTEGRAL_MAX);
-    
-    // PID para control de distancia (seguimiento a distancia fija)
-    PIDController pid_distancia;
     pid_init(&pid_distancia, PID_DISTANCIA_KP, PID_DISTANCIA_KI, PID_DISTANCIA_KD, 
              DISTANCIA_OBJETIVO, PID_DISTANCIA_ALPHA, 
              VELOCIDAD_MAXIMA, PID_DISTANCIA_INTEGRAL_MAX);
     
+    // Reset variables de estado
+    distancias_previas_valid = false;
+    angulo_anterior = 0;
+    y_anterior = 0.0;
+    velocidad_actual = 0;
+    ciclo = 0;
     
-    float distancias_previas[3] = {0, 0, 0}; // None
-    bool distancias_previas_valid = false;
-    float angulo_anterior = 0;  // Inicializamos la variable
-    float y_anterior = 0.0;  // Inicialización del valor Y anterior
-    float velocidad_actual = 0;  // Para suavizado de velocidad
+    control_initialized = true;
+    Serial.println("[CONTROL] Sistema de control inicializado");
+}
 
-    while (true) {
-        void* data = data_receiver.read_data();
+// Procesa UNA iteración del control - debe ser llamada desde loop() del main.cpp
+void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener) {
+    
+    // Contar ejecuciones para debug de frecuencia
+    control_execution_count++;
+    unsigned long current_time = millis();
+    if (current_time - last_frequency_check >= 5000) { // Cada 5 segundos
+        float frequency = control_execution_count / 5.0;
+        Serial.printf("[CONTROL_FREQ] Ejecutándose a %.1f Hz\n", frequency);
+        control_execution_count = 0;
+        last_frequency_check = current_time;
+    }
+    
+    if (!control_initialized) {
+        Serial.println("[CONTROL] ERROR: Debe llamar control_init() primero");
+        return;
+    }
+    
+    // ###########################################################
+    // PASO 0: Verificar MODO del TAG - CONTROL BASADO EN MODO
+    // ###########################################################
+    if (data != nullptr && data->data_valid) {
+        uint8_t modo = (uint8_t)data->control_data[1]; // MODO está en control_data[1]
+        uint8_t joystick = (uint8_t)data->buttons_data[0]; // JOYSTICK está en buttons_data[0]
+        
+        Serial.printf("[MODE_CONTROL] Modo=%d, Joystick=%d\n", modo, joystick);
+        
+        switch (modo) {
+            case 0: // APAGADO
+                Serial.println("[MODE_CONTROL] MODO 0: APAGADO - Deteniendo motores");
+                motor_enviar_pwm(0, 0);
+                return; // Salir de la función, no procesar más control
+                
+            case 1: // SEGUIMIENTO (control normal)
+                Serial.println("[MODE_CONTROL] MODO 1: SEGUIMIENTO - Ejecutando control normal");
+                // Continuar con el control normal (no return aquí)
+                break;
+                
+            case 2: // PAUSA
+                Serial.println("[MODE_CONTROL] MODO 2: PAUSA - Deteniendo motores");
+                motor_enviar_pwm(0, 0);
+                return; // Salir de la función, no procesar más control
+                
+            case 3: // MANUAL (control por joystick)
+                Serial.printf("[MODE_CONTROL] MODO 3: MANUAL - Control por joystick (valor=%d)\n", joystick);
+                processJoystickControl(joystick);
+                return; // Salir de la función, el joystick ya controló los motores
+                
+            default:
+                Serial.printf("[MODE_CONTROL] MODO DESCONOCIDO: %d - Deteniendo motores por seguridad\n", modo);
+                motor_enviar_pwm(0, 0);
+                return; // Salir de la función por seguridad
+        }
+    }
         
         // ###########################################################
-        // PASO 1: Obtengo datos
+        // PASO 1: Verificar datos válidos (SOLO para modo 1 - SEGUIMIENTO)
         // ###########################################################
-        if (data != nullptr) {
-            //Serial.println("Datos completos en cm:", data, type(data));
-            float* distancias = data_receiver.get_distances_array();
+        if (data != nullptr && data->data_valid) {
+            //Serial.println("Datos completos recibidos");
+            float* distancias = data->distancias;
+            
+            // DEBUG: Verificar si las distancias son válidas
+            bool distancias_validas = true;
+            for(int i = 0; i < 3; i++) {
+                if(distancias[i] <= 0 || distancias[i] > 10000) { // Fuera de rango razonable
+                    distancias_validas = false;
+                    break;
+                }
+            }
+            
+            if(!distancias_validas) {
+                Serial.printf("[CONTROL_ERROR] Distancias inválidas: %.1f,%.1f,%.1f - Deteniendo\n", 
+                              distancias[0], distancias[1], distancias[2]);
+                motor_enviar_pwm(0, 0);
+                return;
+            }
             
             // Paso 1.5: Limito variación entre ciclos (anti-salto)
             if (distancias_previas_valid) {
@@ -82,12 +243,12 @@ void main() {
             // ###########################################################
             // MOSTRAR DATOS ADICIONALES DEL ESP32 (FORMATO CORRECTO)
             // ###########################################################
-            // Obtener datos con el mapeo correcto del formato real
-            float* power_data = data_receiver.get_power_data_array();      // [BAT_C, ML_C, MR_C] pos 3-5
-            float* imu_data = data_receiver.get_imu_data_array();          // [PITCH, ROLL, YAW, MOV, VEL, ACCEL_Z] pos 6-11
-            float* tag_sensors = data_receiver.get_tag_sensors_array();    // [S1, S2, S3] pos 12-14
-            float* control_data = data_receiver.get_control_data_array();  // [BAT_TAG, MODO] pos 15-16
-            float* buttons_data = data_receiver.get_buttons_data_array();  // [JOY_D, JOY_A, JOY_I, JOY_T] pos 17-20
+            // Obtener datos directamente de la estructura
+            float* power_data = data->power_data;      // [BAT_C, ML_C, MR_C]
+            float* imu_data = data->imu_data;          // [PITCH, ROLL, YAW, MOV, VEL, ACCEL_Z]
+            float* tag_sensors = data->tag_sensors;    // [S1, S2, S3]
+            float* control_data = data->control_data;  // [BAT_TAG, MODO]
+            float* buttons_data = data->buttons_data;  // [JOY_D, JOY_A, JOY_I, JOY_T]
             
             Serial.printf(" CARRO: BAT_C:%.2fV | ML_C:%.2fA | MR_C:%.2fA\n", power_data[0], power_data[1], power_data[2]);
             Serial.printf(" IMU: Pitch:%.1f° | Roll:%.1f° | Yaw:%.1f° | MOV:%.0f | VEL:%.2f | ACCEL_Z:%.2f\n", imu_data[0], imu_data[1], imu_data[2], imu_data[3], imu_data[4], imu_data[5]);
@@ -186,19 +347,16 @@ void main() {
                 giro_normalizado = velocidades_result.giro_normalizado;
 
                 // Las velocidades ya vienen como PWM de calcular_velocidades_diferenciales
-                pwm_manager.enviar_pwm(vel_izq, vel_der);
+                Serial.printf("[MOTOR_OUTPUT] Enviando velocidades: L=%d, R=%d (max_permitida=%d)\n", 
+                              (int)vel_izq, (int)vel_der, VELOCIDAD_MAXIMA);
+                enviar_pwm(vel_izq, vel_der);
             } else {
-                pwm_manager.detener();
+                detener();
             }
             
         } else {
             Serial.println("Aún no hay datos válidos");
         }
-
-        
-
-        
-    }
 }
 
     
