@@ -294,39 +294,47 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
             }
             
             // ###########################################################
-            // PASO 8  Control PID de velocidad por distancia
+            // PASO 8  Control PID de velocidad por distancia - MEJORADO
             // ###########################################################
             // Control progresivo de velocidad para mantener distancia objetivo
             // Usar promedio de sensores frontales (1 y 2) para mejor precisión
             float distancia_al_tag = (distancias_kalman[0] + distancias_kalman[1]) / 2.0;
             
-            // El PID calcula cuánto debe acelerar/desacelerar para alcanzar la distancia objetivo
+            // El PID calcula la velocidad basada en el error de distancia
             float velocidad_pid = pid_update(&pid_distancia, distancia_al_tag);
             
-            // Lógica correcta del PID:
-            // Si error > 0 (lejos): PID da salida NEGATIVA para acercarse
-            // Si error < 0 (cerca): PID da salida POSITIVA para alejarse
-            // Como queremos seguir al tag, invertimos la lógica:
+            // Error de distancia: positivo = lejos, negativo = cerca
             float error_distancia = distancia_al_tag - DISTANCIA_OBJETIVO;
             
-            // Calcular velocidad objetivo basada en la distancia
+            // Calcular velocidad objetivo basada en la distancia (SOLO AVANCE)
             int velocidad_objetivo;
-            if (abs(error_distancia) > 200) {  // Fuera del rango objetivo: mover
-                if (error_distancia > 0) {  // Lejos: acelerar
-                    velocidad_objetivo = constrain(abs(velocidad_pid), 10, VELOCIDAD_MAXIMA); // int(np.clip(abs(velocidad_pid), 10, VELOCIDAD_MAXIMA))
-                } else {  // Muy cerca: retroceder (o parar si no quieres reversa)
-                    velocidad_objetivo = 0;  // Cambia esto si quieres que retroceda
-                }
-            } else {  // En rango aceptable (±200mm): PARAR
+            
+            if (error_distancia > 500) {
+                // Muy lejos (>500mm): velocidad alta constante
+                velocidad_objetivo = VELOCIDAD_MAXIMA;
+            }
+            else if (error_distancia > 100) {
+                // Lejos (100-500mm): velocidad proporcional
+                float velocidad_proporcional = 20 + (error_distancia - 100) * 0.1; // Base + proporcional
+                velocidad_objetivo = constrain(velocidad_proporcional, 20, VELOCIDAD_MAXIMA);
+            } 
+            else if (error_distancia < -300) {
+                // Está MUY cerca (>300mm más cerca del objetivo): parar completamente
                 velocidad_objetivo = 0;
+            }
+            else {
+                // En rango aceptable (-300mm a +100mm): velocidad muy baja para mantenimiento
+                velocidad_objetivo = constrain(8 + error_distancia * 0.05, 0, 25); // Incrementado velocidades
             }
             
             // Aplicar suavizado de velocidad SOLO para arranque y frenado
             velocidad_actual = suavizar_velocidad(velocidad_actual, velocidad_objetivo, ACELERACION_MAXIMA);
             int velocidad_avance = (int)velocidad_actual;
             
-            Serial.printf("Distancia al tag: %.1fmm, Objetivo: %.1fmm\n", distancia_al_tag, (float)DISTANCIA_OBJETIVO);
-            Serial.printf("PID Distancia: %.2f -> Vel Objetivo: %d -> Vel Suavizada: %d\n", velocidad_pid, velocidad_objetivo, velocidad_avance);
+            Serial.printf("Distancia al tag: %.1fmm, Objetivo: %.1fmm, Error: %.1fmm\n", 
+                          distancia_al_tag, (float)DISTANCIA_OBJETIVO, error_distancia);
+            Serial.printf("PID Distancia: %.2f -> Vel Objetivo: %d -> Vel Suavizada: %d\n", 
+                          velocidad_pid, velocidad_objetivo, velocidad_avance);
             
             // ###########################################################
             // PASO 9  Control diferencial y pwm 
