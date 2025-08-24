@@ -38,8 +38,20 @@ float limitar_cambio(float previo, float actual, float max_delta);
 // Función de validación/umbral
 bool debe_corregir(float angulo, float umbral);
 
+// Función para calcular umbral dinámico basado en distancia
+float calcular_umbral_dinamico(float distancia_mm, float umbral_min, float umbral_max, 
+                               float dist_min, float dist_max);
+
+// Función para limitar velocidad angular (suavizado de correcciones PID)
+float limitar_velocidad_angular(float correccion_actual, float correccion_anterior, 
+                                float max_cambio_por_ciclo, float factor_suavizado);
+
 // Función para suavizar velocidad (control de aceleración)
 float suavizar_velocidad(float velocidad_actual, float velocidad_objetivo, float aceleracion_maxima);
+
+// Nueva función con aceleración y desaceleración separadas
+float suavizar_velocidad_avanzada(float velocidad_actual, float velocidad_objetivo, 
+                                  float aceleracion_maxima, float desaceleracion_maxima);
 
 // Estructura para velocidades diferenciales
 struct VelocidadesDiferenciales {

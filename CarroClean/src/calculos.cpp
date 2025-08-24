@@ -292,6 +292,41 @@ bool debe_corregir(float angulo, float umbral) {
     return abs(angulo) > umbral;
 }
 
+// Función para calcular umbral dinámico basado en distancia
+float calcular_umbral_dinamico(float distancia_mm, float umbral_min, float umbral_max, 
+                               float dist_min, float dist_max) {
+    /*
+    Calcula un umbral dinámico basado en la distancia al TAG.
+    
+    Parámetros:
+    - distancia_mm: distancia actual al TAG en milímetros
+    - umbral_min: umbral mínimo (para distancia cercana)
+    - umbral_max: umbral máximo (para distancia lejana)
+    - dist_min: distancia mínima de referencia (1.5m = 1500mm)
+    - dist_max: distancia máxima de referencia (10m = 10000mm)
+    
+    Retorna:
+    - float: umbral calculado dinámicamente
+    
+    Lógica:
+    - A 1.5m: umbral mínimo (más tolerante, permite más error angular)
+    - A 10m: umbral máximo (más estricto, requiere más precisión)
+    - Entre 1.5m y 10m: interpolación lineal
+    */
+    
+    // Limitar distancia al rango válido
+    if (distancia_mm <= dist_min) {
+        return umbral_min;
+    } else if (distancia_mm >= dist_max) {
+        return umbral_max;
+    } else {
+        // Interpolación lineal entre dist_min y dist_max
+        float factor = (distancia_mm - dist_min) / (dist_max - dist_min);
+        float umbral_dinamico = umbral_min + factor * (umbral_max - umbral_min);
+        return umbral_dinamico;
+    }
+}
+
 // Función para suavizar velocidad (control de aceleración)
 float suavizar_velocidad(float velocidad_actual, float velocidad_objetivo, float aceleracion_maxima) {
     // CASO 1: Arranque desde parado (0 -> velocidad)
@@ -307,6 +342,27 @@ float suavizar_velocidad(float velocidad_actual, float velocidad_objetivo, float
     // CASO 3: Cambios normales (velocidad -> velocidad diferente)
     // No aplicar filtro para no afectar las curvas
     else {
+        return velocidad_objetivo;
+    }
+}
+
+// Nueva función con aceleración y desaceleración separadas
+float suavizar_velocidad_avanzada(float velocidad_actual, float velocidad_objetivo, 
+                                  float aceleracion_maxima, float desaceleracion_maxima) {
+    float diferencia = velocidad_objetivo - velocidad_actual;
+    
+    if (diferencia > 0) {
+        // Necesita acelerar
+        float incremento = min(diferencia, aceleracion_maxima);
+        return velocidad_actual + incremento;
+    }
+    else if (diferencia < 0) {
+        // Necesita frenar/desacelerar
+        float decremento = min(abs(diferencia), desaceleracion_maxima);
+        return velocidad_actual - decremento;
+    }
+    else {
+        // Ya está en la velocidad objetivo
         return velocidad_objetivo;
     }
 }
@@ -346,4 +402,42 @@ VelocidadesDiferenciales calcular_velocidades_diferenciales(float v_lineal, floa
     resultado.vel_izq = (int)vel_izq_float;
 
     return resultado;
+}
+
+// Función para limitar velocidad angular (suavizado de correcciones PID)
+float limitar_velocidad_angular(float correccion_actual, float correccion_anterior, 
+                                float max_cambio_por_ciclo, float factor_suavizado) {
+    /*
+    Limita la velocidad de cambio de la corrección angular para evitar movimientos bruscos.
+    
+    Parámetros:
+    - correccion_actual: corrección que quiere aplicar el PID
+    - correccion_anterior: corrección aplicada en el ciclo anterior
+    - max_cambio_por_ciclo: máximo cambio permitido por ciclo (ej. 3°)
+    - factor_suavizado: factor de suavizado (0.0-1.0, donde 1.0 = sin suavizado)
+    
+    Retorna:
+    - float: corrección limitada y suavizada
+    */
+    
+    // Calcular el cambio deseado
+    float cambio_deseado = correccion_actual - correccion_anterior;
+    
+    // Limitar el cambio máximo por ciclo
+    float cambio_limitado;
+    if (cambio_deseado > max_cambio_por_ciclo) {
+        cambio_limitado = max_cambio_por_ciclo;
+    } else if (cambio_deseado < -max_cambio_por_ciclo) {
+        cambio_limitado = -max_cambio_por_ciclo;
+    } else {
+        cambio_limitado = cambio_deseado;
+    }
+    
+    // Aplicar suavizado adicional
+    float cambio_suavizado = cambio_limitado * factor_suavizado;
+    
+    // Calcular nueva corrección
+    float correccion_suavizada = correccion_anterior + cambio_suavizado;
+    
+    return correccion_suavizada;
 }

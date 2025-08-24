@@ -34,16 +34,13 @@ volatile bool newDataReceived = false;
 volatile unsigned long lastDataReceived = 0;
 volatile unsigned long totalPacketsReceived = 0;
 
-// Variables para el sistema de control en Core 1
-TaskHandle_t controlTaskHandle = NULL;
+// Variables para el sistema de control sincronizado con UWB
 CarroData sharedCarroData = {0};
-volatile bool newUWBData = false;
 SemaphoreHandle_t dataMutex = NULL;
 
 // Declaraciones de funciones
 void printControlStatus();
-void updateSharedData(float distances[NUM_ANCHORS], bool anchor_status[NUM_ANCHORS], unsigned long measurement_count);
-void controlTask(void* parameter);
+void updateSharedDataAndRunControl(float distances[NUM_ANCHORS], bool anchor_status[NUM_ANCHORS], unsigned long measurement_count);
 void motorControlCallback(float velocidad_izq, float velocidad_der);
 
 // Callback para recepción de datos ESP-NOW
@@ -97,46 +94,8 @@ void motorControlCallback(float velocidad_izq, float velocidad_der) {
     motor_enviar_pwm(velocidad_izq, velocidad_der);
 }
 
-// Tarea de control que se ejecuta en Core 1
-void controlTask(void* parameter) {
-    Serial.println("[CONTROL] Iniciando tarea de control en Core 1");
-    
-    // Configurar el control de motores directo
-    setupMotorControlDirect();
-    
-    // Inicializar el sistema de control
-    control_init();
-    
-    unsigned long lastControlTime = 0;
-    const unsigned long CONTROL_INTERVAL = 10; // 100Hz para respuesta rápida
-    
-    while (true) {
-        unsigned long currentTime = millis();
-        
-        if (currentTime - lastControlTime >= CONTROL_INTERVAL) {
-            // Copiar datos compartidos de forma segura
-            CarroData localData;
-            if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-                localData = sharedCarroData;
-                xSemaphoreGive(dataMutex);
-            } else {
-                // Si no podemos obtener el mutex, usar datos anteriores
-                vTaskDelay(pdMS_TO_TICKS(1));
-                continue;
-            }
-            
-            // Ejecutar el control principal
-            control_main(&localData, motorControlCallback, [](){motor_enviar_pwm(0, 0);});
-            
-            lastControlTime = currentTime;
-        }
-        
-        vTaskDelay(pdMS_TO_TICKS(1)); // Pequeña pausa para no saturar el CPU
-    }
-}
-
-// Función para actualizar los datos compartidos del carro
-void updateSharedData(float distances[NUM_ANCHORS], bool anchor_status[NUM_ANCHORS], unsigned long measurement_count) {
+// Función que actualiza datos y ejecuta control inmediatamente después de mediciones UWB
+void updateSharedDataAndRunControl(float distances[NUM_ANCHORS], bool anchor_status[NUM_ANCHORS], unsigned long measurement_count) {
     if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
         // Limpiar estructura
         memset(&sharedCarroData, 0, sizeof(CarroData));
@@ -177,10 +136,11 @@ void updateSharedData(float distances[NUM_ANCHORS], bool anchor_status[NUM_ANCHO
             sharedCarroData.data_valid = false;
         }
         
-        // Marcar que hay nuevos datos
-        newUWBData = true;
-        
         xSemaphoreGive(dataMutex);
+        
+        // *** EJECUTAR CONTROL INMEDIATAMENTE DESPUÉS DE MEDICIONES UWB ***
+        // Esto garantiza que el control se ejecute a la misma frecuencia que las mediciones
+        control_main(&sharedCarroData, motorControlCallback, [](){motor_enviar_pwm(0, 0);});
     }
 }
 
@@ -229,23 +189,13 @@ void setup() {
   // Inicializar estructura de datos compartidos
   memset(&sharedCarroData, 0, sizeof(CarroData));
   
-  // Crear tarea de control en Core 1
-  xTaskCreatePinnedToCore(
-      controlTask,        // Función de la tarea
-      "ControlTask",      // Nombre de la tarea
-      8192,              // Tamaño del stack (8KB)
-      NULL,              // Parámetros
-      2,                 // Prioridad (mayor que loop)
-      &controlTaskHandle, // Handle de la tarea
-      1                  // Core 1
-  );
+  // Configurar el control de motores directo
+  setupMotorControlDirect();
   
-  if (controlTaskHandle == NULL) {
-      Serial.println("ERROR: No se pudo crear la tarea de control");
-      return;
-  }
+  // Inicializar el sistema de control
+  control_init();
   
-  Serial.println("[CONTROL] Sistema de control inicializado en Core 1");
+  Serial.println("[CONTROL] Sistema de control inicializado - sincronizado con UWB");
 }
 
 void loop() {
@@ -340,8 +290,9 @@ void loop() {
   ///////////////////////////////////////////////////////////////////////
 
   if (currentCount > lastMeasurementCount) {
-      // Hay nuevas mediciones, actualizar datos compartidos para el sistema de control
-      updateSharedData(distances, anchor_status, currentCount);
+      // *** NUEVA IMPLEMENTACIÓN: CONTROL SINCRONIZADO CON UWB ***
+      // Actualizar datos compartidos Y ejecutar control inmediatamente
+      updateSharedDataAndRunControl(distances, anchor_status, currentCount);
       
       // Enviar a RPi con datos del TAG
       
@@ -367,14 +318,12 @@ void loop() {
       
       lastMeasurementCount = currentCount;
       
-      // Mostrar información ocasionalmente
+      // Mostrar información ocasionalmente (cada ~2 segundos a frecuencia UWB)
       static int send_count = 0;
-      if (++send_count % 40 == 0) { // Cada 2 segundos
-          Serial.printf("[20Hz] Enviando: UWB[%.1f,%.1f,%.1f] TAG[%.2fV,%d,%d, qAcc=%d, stab=%u, steps=%lu] Valid:%s\n", 
+      if (++send_count % 20 == 0) { // Ajustado para frecuencia real del UWB
+          Serial.printf("[UWB+CONTROL] UWB[%.1f,%.1f,%.1f] TAG[%.2fV,%d,%d, qAcc=%d] Valid:%s Control:SYNC\n", 
                         distances[0], distances[1], distances[2],
                         tagBatteryVoltage, tagModo, tagJoystick, tagQuatAcc,
-                        (unsigned)(tagDataValid ? receivedData.bnoStability : 0),
-                        (unsigned long)(tagDataValid ? receivedData.stepCount : 0),
                         tagDataValid ? "SI" : "NO");
       }
   }
@@ -390,7 +339,7 @@ void printControlStatus() {
         Serial.println("\n========= ESTADO DEL SISTEMA DE CONTROL =========");
         
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            Serial.printf("[CONTROL] Distancias UWB: S1=%.1fcm, S2=%.1fcm, S3=%.1fcm\n", 
+            Serial.printf("[CONTROL] Distancias UWB: S1=%.1fmm, S2=%.1fmm, S3=%.1fmm\n", 
                          sharedCarroData.distancias[0], sharedCarroData.distancias[1], sharedCarroData.distancias[2]);
             Serial.printf("[CONTROL] IMU Yaw: %.1f°\n", sharedCarroData.imu_data[2]);
             Serial.printf("[CONTROL] TAG Batería: %.2fV, Modo: %.0f\n", 
@@ -402,8 +351,17 @@ void printControlStatus() {
             Serial.println("[CONTROL] ERROR: No se pudo acceder a datos compartidos");
         }
         
-        Serial.printf("[SISTEMA] Tarea de control: %s\n", 
-                     (controlTaskHandle != NULL) ? "ACTIVA" : "INACTIVA");
+        // Obtener frecuencia real del UWB
+        unsigned long uwbCount = UWBCore_getMeasurementCount();
+        static unsigned long lastUWBCount = 0;
+        static unsigned long lastFreqCheck = millis();
+        unsigned long currentTime = millis();
+        float uwbFreq = (uwbCount - lastUWBCount) * 1000.0 / (currentTime - lastFreqCheck);
+        lastUWBCount = uwbCount;
+        lastFreqCheck = currentTime;
+        
+        Serial.printf("[SISTEMA] Control sincronizado con UWB: %.1f Hz\n", uwbFreq);
+        Serial.printf("[SISTEMA] Total mediciones UWB: %lu\n", uwbCount);
         Serial.printf("[SISTEMA] Memoria libre: %d bytes\n", esp_get_free_heap_size());
         Serial.println("================================================\n");
         

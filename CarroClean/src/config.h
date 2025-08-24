@@ -15,7 +15,7 @@
 // #################################################################
 // TIEMPO DE ESPERA
 // #################################################################
-#define TIEMPO_ESPERA 0.01  // 10ms
+#define TIEMPO_ESPERA 0.0 // 10ms
 
 // #################################################################
 // PASO 2: FILTRO DE MEDIA MOVIL
@@ -32,23 +32,30 @@
 // LÍMITES Y DELTAS
 // #################################################################
 #define MAX_DELTA_POS 100   // Delta para las posiciones iniciales antes de media
-#define MAX_DELTA 10        // Delta del ángulo
+#define MAX_DELTA 6        // Delta del ángulo
 
 // #################################################################
-// UMBRAL A PARTIR DEL CUAL SE CORRIGE
+// UMBRAL DINÁMICO BASADO EN DISTANCIA
 // #################################################################
-#define UMBRAL 10  // Aumentado de 5 a 8 para evitar correcciones constantes
+#define UMBRAL_MINIMO 25.0       // Umbral a 1.5m (cerca) - más tolerante
+#define UMBRAL_MAXIMO 10.0      // Umbral a 10m (lejos) - más estricto
+#define DISTANCIA_UMBRAL_MIN 1500.0   // 1.5m en mm
+#define DISTANCIA_UMBRAL_MAX 10000.0  // 10m en mm
 
 // #################################################################
 // PARÁMETROS DEL CONTROLADOR PID DE ÁNGULO
 // #################################################################
-#define PID_KP 1.0          // Reducido de 1.0 a 0.7 para correcciones más suaves
-#define PID_KI 0.03         // Reducido de 0.08 a 0.03 para evitar oscilaciones
-#define PID_KD 1.5          // Incrementado de 1.0 a 1.2 para mejor estabilidad
+#define PID_KP 0.25         // Reducido aún más para suavidad
+#define PID_KI 0.01         // Reducido para evitar acumulación agresiva
+#define PID_KD 0.8          // Reducido para menos reactividad
 #define PID_SETPOINT 0.0
-#define PID_ALPHA 0.3
-#define PID_SALIDA_MAX 60.0 // Reducido de 40.0 a 15.0 para correcciones más suaves
-#define INTEGRAL_MAX 50.0
+#define PID_ALPHA 0.5       // Mayor filtrado del error
+#define PID_SALIDA_MAX  10.0 // MÁXIMA CORRECCIÓN POR CICLO: 3°/ciclo × 15Hz = 45°/s máximo
+#define INTEGRAL_MAX 20.0   // Reducido para evitar windup
+
+// Control de suavidad adicional
+#define MAX_GIRO_POR_SEGUNDO 60.0  // Máximo 60°/segundo de corrección total
+#define FACTOR_SUAVIZADO_GIRO 0.7  // Factor de suavizado para transiciones (0.0-1.0)
 
 // #################################################################
 // CONTROL DE VELOCIDAD LINEAL POR DISTANCIA
@@ -65,8 +72,9 @@
 // #################################################################
 // CONTROL DE VELOCIDAD Y ACELERACIÓN
 // #################################################################
-#define VELOCIDAD_MAXIMA 70  // Incrementado de 45 a 70 para mejor velocidad de seguimiento
-#define ACELERACION_MAXIMA 15  // Incrementado de 1 a 10 para respuesta más rápida
+#define VELOCIDAD_MAXIMA 60  // Incrementado de 45 a 70 para mejor velocidad de seguimiento
+#define ACELERACION_MAXIMA 10  // Para acelerar (arranque suave)
+#define DESACELERACION_MAXIMA 35  // Para frenar (frenado más rápido)
 
 // #################################################################
 // CONTROL MANUAL (MODO 3)

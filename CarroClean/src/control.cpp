@@ -13,6 +13,7 @@ static bool distancias_previas_valid = false;
 static float angulo_anterior = 0;
 static float y_anterior = 0.0;
 static float velocidad_actual = 0;
+static float correccion_anterior = 0; // Para suavizado de correcciones PID
 static int ciclo = 0;
 
 // Variables para debug de frecuencia
@@ -123,6 +124,7 @@ void control_init() {
     angulo_anterior = 0;
     y_anterior = 0.0;
     velocidad_actual = 0;
+    correccion_anterior = 0; // Reset corrección PID anterior
     ciclo = 0;
     
     control_initialized = true;
@@ -194,7 +196,7 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
             // DEBUG: Verificar si las distancias son válidas
             bool distancias_validas = true;
             for(int i = 0; i < 3; i++) {
-                if(distancias[i] <= 0 || distancias[i] > 10000) { // Fuera de rango razonable
+                if(distancias[i] <= 0 || distancias[i] > 40000) { // Fuera de rango razonable
                     distancias_validas = false;
                     break;
                 }
@@ -210,7 +212,7 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
             // Paso 1.5: Limito variación entre ciclos (anti-salto)
             if (distancias_previas_valid) {
                 float distancias_limitadas[3];
-                limitar_variacion(distancias, distancias_previas, distancias_limitadas, 3, MAX_DELTA);
+                limitar_variacion(distancias, distancias_previas, distancias_limitadas, 3, MAX_DELTA_POS);
                 // Copiar resultado de vuelta a distancias
                 for(int i = 0; i < 3; i++) {
                     distancias[i] = distancias_limitadas[i];
@@ -240,28 +242,14 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
             kalman_filtrar(distancias_media, distancias_kalman);
             Serial.printf("Las distancias POR KALMAN en mm son: %.1f,%.1f,%.1f\n", distancias_kalman[0], distancias_kalman[1], distancias_kalman[2]);
             
-            // ###########################################################
-            // MOSTRAR DATOS ADICIONALES DEL ESP32 (FORMATO CORRECTO)
-            // ###########################################################
-            // Obtener datos directamente de la estructura
-            float* power_data = data->power_data;      // [BAT_C, ML_C, MR_C]
-            float* imu_data = data->imu_data;          // [PITCH, ROLL, YAW, MOV, VEL, ACCEL_Z]
-            float* tag_sensors = data->tag_sensors;    // [S1, S2, S3]
-            float* control_data = data->control_data;  // [BAT_TAG, MODO]
-            float* buttons_data = data->buttons_data;  // [JOY_D, JOY_A, JOY_I, JOY_T]
-            
-            Serial.printf(" CARRO: BAT_C:%.2fV | ML_C:%.2fA | MR_C:%.2fA\n", power_data[0], power_data[1], power_data[2]);
-            Serial.printf(" IMU: Pitch:%.1f° | Roll:%.1f° | Yaw:%.1f° | MOV:%.0f | VEL:%.2f | ACCEL_Z:%.2f\n", imu_data[0], imu_data[1], imu_data[2], imu_data[3], imu_data[4], imu_data[5]);
-            Serial.printf(" TAG: S1:%.1f | S2:%.1f | S3:%.1f | BAT_TAG:%.2fV | MODO:%.0f\n", tag_sensors[0], tag_sensors[1], tag_sensors[2], control_data[0], control_data[1]);
-            Serial.printf(" JOYSTICK: D:%.0f A:%.0f I:%.0f T:%.0f\n", buttons_data[0], buttons_data[1], buttons_data[2], buttons_data[3]);
             
             // ###########################################################
             // PASO 4: Mediante trilateración obtengo la ubicación del tag
             // ###########################################################
-            float pos_tag3d[3];
-            trilateracion_3d(SENSOR_POSICIONES, distancias, pos_tag3d);
-            float pos_tag3d_media[3];
-            trilateracion_3d(SENSOR_POSICIONES, distancias_media, pos_tag3d_media);
+            //float pos_tag3d[3];
+            //trilateracion_3d(SENSOR_POSICIONES, distancias, pos_tag3d);
+            //float pos_tag3d_media[3];
+            //trilateracion_3d(SENSOR_POSICIONES, distancias_media, pos_tag3d_media);
             float pos_tag3d_kalman[3];
             trilateracion_3d(SENSOR_POSICIONES, distancias_kalman, pos_tag3d_kalman);
 
@@ -278,27 +266,54 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
             Serial.printf("ÁNGULO : %.2f\n", angulo_relativo);
 
             // ###########################################################
-            // PASO 6: UMBRAL 
+            // PASO 6: CALCULAR DISTANCIA AL TAG PARA USO MÚLTIPLE
             // ###########################################################
-            float correccion;
-            if (debe_corregir(angulo_relativo, UMBRAL)) {
-                // ###########################################################
-                // PASO 7: CCNTROL PID 
-                // ###########################################################
-                correccion = pid_update(&pid, angulo_relativo);
-                Serial.printf("PID %.2f\n", correccion);
-            } else {
-                //Serial.printf("Corrección ignorada: ángulo de %.2f° está dentro del umbral\n", angulo_relativo);
-                correccion = 0;  // No se aplica corrección
-                Serial.printf("PID %.2f\n", correccion);
-            }
-            
-            // ###########################################################
-            // PASO 8  Control PID de velocidad por distancia - MEJORADO
-            // ###########################################################
-            // Control progresivo de velocidad para mantener distancia objetivo
             // Usar promedio de sensores frontales (1 y 2) para mejor precisión
             float distancia_al_tag = (distancias_kalman[0] + distancias_kalman[1]) / 2.0;
+            
+            // ###########################################################
+            // PASO 7: UMBRAL DINÁMICO BASADO EN DISTANCIA
+            // ###########################################################
+            // Calcular umbral dinámico: cerca = más tolerante, lejos = más estricto
+            float umbral_dinamico = calcular_umbral_dinamico(distancia_al_tag, 
+                                                            UMBRAL_MINIMO, UMBRAL_MAXIMO,
+                                                            DISTANCIA_UMBRAL_MIN, DISTANCIA_UMBRAL_MAX);
+            
+            float correccion_raw;
+            float correccion; // Declarar fuera del if para uso posterior
+            
+            if (debe_corregir(angulo_relativo, umbral_dinamico)) {
+                // ###########################################################
+                // PASO 8: CONTROL PID ANGULAR
+                // ###########################################################
+                correccion_raw = pid_update(&pid, angulo_relativo);
+                
+                // ###########################################################
+                // PASO 8.5: SUAVIZADO DE CORRECCIÓN ANGULAR
+                // ###########################################################
+                // Limitar velocidad de cambio para evitar movimientos bruscos
+                correccion = limitar_velocidad_angular(correccion_raw, correccion_anterior, 
+                                                       PID_SALIDA_MAX, FACTOR_SUAVIZADO_GIRO);
+                
+                Serial.printf("DIST:%.0fmm UMBRAL:%.1f° PID_RAW:%.2f PID_SUAV:%.2f\n", 
+                              distancia_al_tag, umbral_dinamico, correccion_raw, correccion);
+            } else {
+                // No se aplica corrección pero mantenemos suavidad hacia cero
+                correccion = limitar_velocidad_angular(0, correccion_anterior, 
+                                                       PID_SALIDA_MAX, FACTOR_SUAVIZADO_GIRO);
+                
+                Serial.printf("DIST:%.0fmm UMBRAL:%.1f° PID:%.2f (ignorado pero suavizado)\n", 
+                              distancia_al_tag, umbral_dinamico, correccion);
+            }
+            
+            // Actualizar corrección anterior para próximo ciclo
+            correccion_anterior = correccion;
+            
+            // ###########################################################
+            // PASO 9: Control PID de velocidad por distancia - MEJORADO
+            // ###########################################################
+            // Control progresivo de velocidad para mantener distancia objetivo
+            // (distancia_al_tag ya calculada arriba)
             
             // El PID calcula la velocidad basada en el error de distancia
             float velocidad_pid = pid_update(&pid_distancia, distancia_al_tag);
@@ -327,8 +342,9 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                 velocidad_objetivo = constrain(8 + error_distancia * 0.05, 0, 25); // Incrementado velocidades
             }
             
-            // Aplicar suavizado de velocidad SOLO para arranque y frenado
-            velocidad_actual = suavizar_velocidad(velocidad_actual, velocidad_objetivo, ACELERACION_MAXIMA);
+            // Aplicar suavizado de velocidad con aceleración y desaceleración separadas
+            velocidad_actual = suavizar_velocidad_avanzada(velocidad_actual, velocidad_objetivo, 
+                                                           ACELERACION_MAXIMA, DESACELERACION_MAXIMA);
             int velocidad_avance = (int)velocidad_actual;
             
             Serial.printf("Distancia al tag: %.1fmm, Objetivo: %.1fmm, Error: %.1fmm\n", 
