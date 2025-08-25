@@ -279,35 +279,17 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                                                             UMBRAL_MINIMO, UMBRAL_MAXIMO,
                                                             DISTANCIA_UMBRAL_MIN, DISTANCIA_UMBRAL_MAX);
             
-            float correccion_raw;
-            float correccion; // Declarar fuera del if para uso posterior
-            
+            float correccion;
             if (debe_corregir(angulo_relativo, umbral_dinamico)) {
                 // ###########################################################
                 // PASO 8: CONTROL PID ANGULAR
                 // ###########################################################
-                correccion_raw = pid_update(&pid, angulo_relativo);
-                
-                // ###########################################################
-                // PASO 8.5: SUAVIZADO DE CORRECCIÓN ANGULAR
-                // ###########################################################
-                // Limitar velocidad de cambio para evitar movimientos bruscos
-                correccion = limitar_velocidad_angular(correccion_raw, correccion_anterior, 
-                                                       PID_SALIDA_MAX, FACTOR_SUAVIZADO_GIRO);
-                
-                Serial.printf("DIST:%.0fmm UMBRAL:%.1f° PID_RAW:%.2f PID_SUAV:%.2f\n", 
-                              distancia_al_tag, umbral_dinamico, correccion_raw, correccion);
+                correccion = pid_update(&pid, angulo_relativo);
+                Serial.printf("DIST:%.0fmm UMBRAL:%.1f° PID:%.2f\n", distancia_al_tag, umbral_dinamico, correccion);
             } else {
-                // No se aplica corrección pero mantenemos suavidad hacia cero
-                correccion = limitar_velocidad_angular(0, correccion_anterior, 
-                                                       PID_SALIDA_MAX, FACTOR_SUAVIZADO_GIRO);
-                
-                Serial.printf("DIST:%.0fmm UMBRAL:%.1f° PID:%.2f (ignorado pero suavizado)\n", 
-                              distancia_al_tag, umbral_dinamico, correccion);
+                correccion = 0;  // No se aplica corrección
+                Serial.printf("DIST:%.0fmm UMBRAL:%.1f° PID:%.2f (ignorado)\n", distancia_al_tag, umbral_dinamico, correccion);
             }
-            
-            // Actualizar corrección anterior para próximo ciclo
-            correccion_anterior = correccion;
             
             // ###########################################################
             // PASO 9: Control PID de velocidad por distancia - MEJORADO

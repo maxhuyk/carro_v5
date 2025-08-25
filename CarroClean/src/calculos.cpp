@@ -300,8 +300,8 @@ float calcular_umbral_dinamico(float distancia_mm, float umbral_min, float umbra
     
     Parámetros:
     - distancia_mm: distancia actual al TAG en milímetros
-    - umbral_min: umbral mínimo (para distancia cercana)
-    - umbral_max: umbral máximo (para distancia lejana)
+    - umbral_min: umbral mínimo (para distancia cercana) - más estricto
+    - umbral_max: umbral máximo (para distancia lejana) - más tolerante
     - dist_min: distancia mínima de referencia (1.5m = 1500mm)
     - dist_max: distancia máxima de referencia (10m = 10000mm)
     
@@ -309,9 +309,13 @@ float calcular_umbral_dinamico(float distancia_mm, float umbral_min, float umbra
     - float: umbral calculado dinámicamente
     
     Lógica:
-    - A 1.5m: umbral mínimo (más tolerante, permite más error angular)
-    - A 10m: umbral máximo (más estricto, requiere más precisión)
+    - A 1.5m: umbral mínimo (más estricto, ej. 5°) 
+    - A 10m: umbral máximo (más tolerante, ej. 25°)
     - Entre 1.5m y 10m: interpolación lineal
+    
+    Razón: Cerca del objetivo, pequeños errores angulares causan gran 
+    desviación, por lo que necesitamos ser más estrictos. Lejos del 
+    objetivo, pequeños errores tienen poco impacto.
     */
     
     // Limitar distancia al rango válido
@@ -440,4 +444,42 @@ float limitar_velocidad_angular(float correccion_actual, float correccion_anteri
     float correccion_suavizada = correccion_anterior + cambio_suavizado;
     
     return correccion_suavizada;
+}
+
+// Función para calcular salida máxima del PID basada en velocidad actual
+float calcular_pid_salida_max_por_velocidad(float velocidad_actual, 
+                                            float vel_baja, float vel_alta,
+                                            float salida_max_baja, float salida_max_alta) {
+    /*
+    Calcula la salida máxima del PID angular basada en la velocidad actual del vehículo.
+    A menor velocidad, permite correcciones más agresivas.
+    A mayor velocidad, limita las correcciones para seguridad.
+    
+    Parámetros:
+    - velocidad_actual: velocidad actual del vehículo (PWM)
+    - vel_baja: velocidad considerada "baja" (ej. 10 PWM)
+    - vel_alta: velocidad considerada "alta" (ej. 40 PWM)
+    - salida_max_baja: máxima corrección a velocidad baja (ej. 15°)
+    - salida_max_alta: máxima corrección a velocidad alta (ej. 3°)
+    
+    Retorna:
+    - float: salida máxima calculada dinámicamente
+    
+    Lógica:
+    - A velocidad ≤ vel_baja: salida_max_baja (corrección agresiva)
+    - A velocidad ≥ vel_alta: salida_max_alta (corrección suave)
+    - Entre vel_baja y vel_alta: interpolación lineal
+    */
+    
+    // Limitar velocidad al rango válido
+    if (velocidad_actual <= vel_baja) {
+        return salida_max_baja;
+    } else if (velocidad_actual >= vel_alta) {
+        return salida_max_alta;
+    } else {
+        // Interpolación lineal entre vel_baja y vel_alta
+        float factor = (velocidad_actual - vel_baja) / (vel_alta - vel_baja);
+        float salida_max_dinamica = salida_max_baja - factor * (salida_max_baja - salida_max_alta);
+        return salida_max_dinamica;
+    }
 }

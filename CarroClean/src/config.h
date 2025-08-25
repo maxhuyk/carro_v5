@@ -43,14 +43,20 @@
 #define DISTANCIA_UMBRAL_MAX 10000.0  // 10m en mm
 
 // #################################################################
-// PARÁMETROS DEL CONTROLADOR PID DE ÁNGULO
+// PARÁMETROS DEL CONTROLADOR PID DE ÁNGULO ADAPTATIVO
 // #################################################################
-#define PID_KP 0.25         // Reducido aún más para suavidad
-#define PID_KI 0.01         // Reducido para evitar acumulación agresiva
-#define PID_KD 0.8          // Reducido para menos reactividad
+#define PID_KP 0.25         // Base KP para velocidad media
+#define PID_KI 0.01         // Base KI
+#define PID_KD 0.8          // Base KD
 #define PID_SETPOINT 0.0
 #define PID_ALPHA 0.5       // Mayor filtrado del error
-#define PID_SALIDA_MAX  10.0 // MÁXIMA CORRECCIÓN POR CICLO: 3°/ciclo × 15Hz = 45°/s máximo
+#define PID_SALIDA_MAX 10.0 // Máxima salida del PID
+// PID ADAPTATIVO POR VELOCIDAD
+#define PID_SALIDA_MAX_BAJA_VEL 15.0   // Máxima corrección a velocidad baja (agresivo)
+#define PID_SALIDA_MAX_ALTA_VEL 3.0    // Máxima corrección a velocidad alta (suave)
+#define VELOCIDAD_UMBRAL_BAJA 10       // Velocidad considerada "baja" para PID agresivo
+#define VELOCIDAD_UMBRAL_ALTA 40       // Velocidad considerada "alta" para PID suave
+
 #define INTEGRAL_MAX 20.0   // Reducido para evitar windup
 
 // Control de suavidad adicional

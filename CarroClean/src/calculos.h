@@ -46,6 +46,11 @@ float calcular_umbral_dinamico(float distancia_mm, float umbral_min, float umbra
 float limitar_velocidad_angular(float correccion_actual, float correccion_anterior, 
                                 float max_cambio_por_ciclo, float factor_suavizado);
 
+// Función para calcular salida máxima del PID basada en velocidad actual
+float calcular_pid_salida_max_por_velocidad(float velocidad_actual, 
+                                            float vel_baja, float vel_alta,
+                                            float salida_max_baja, float salida_max_alta);
+
 // Función para suavizar velocidad (control de aceleración)
 float suavizar_velocidad(float velocidad_actual, float velocidad_objetivo, float aceleracion_maxima);
 
