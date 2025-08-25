@@ -140,6 +140,24 @@ void updateSharedDataAndRunControl(float distances[NUM_ANCHORS], bool anchor_sta
         
         // *** EJECUTAR CONTROL INMEDIATAMENTE DESPUÉS DE MEDICIONES UWB ***
         // Esto garantiza que el control se ejecute a la misma frecuencia que las mediciones
+        
+        // En modo 0 (APAGADO), imprimir distancias DW3000 para diagnóstico
+        if (tagDataValid && receivedData.modo == 0) {
+            static unsigned long lastPrintMode0 = 0;
+            if (millis() - lastPrintMode0 > 1000) { // Imprimir cada segundo en modo 0
+                Serial.printf("[MODO_0_DEBUG] Distancias DW3000: ");
+                for (int i = 0; i < NUM_ANCHORS; i++) {
+                    if (anchor_status[i]) {
+                        Serial.printf("A%d:%.1fcm ", i+1, distances[i]);
+                    } else {
+                        Serial.printf("A%d:FAIL ", i+1);
+                    }
+                }
+                Serial.printf("| Count:%lu\n", measurement_count);
+                lastPrintMode0 = millis();
+            }
+        }
+        
         control_main(&sharedCarroData, motorControlCallback, [](){motor_enviar_pwm(0, 0);});
     }
 }

@@ -29,13 +29,13 @@ bool DW3000Class::_mcpInitialized = false;
 DW3000Class::DW3000Class(uint8_t csPin, uint8_t rstPin, uint8_t irqPin)
 	: _csPin(csPin), _rstPin(rstPin), _irqPin(irqPin)
 {
-	config[0] = CHANNEL_5;
-	config[1] = PREAMBLE_128;
-	config[2] = 9;
-	config[3] = PAC8;
-	config[4] = DATARATE_6_8MB;
-	config[5] = PHR_MODE_STANDARD;
-	config[6] = PHR_RATE_850KB;
+	config[0] = CHANNEL_5;        // Canal 5 (3.5 GHz) - mejor alcance y menos problemas
+	config[1] = PREAMBLE_128;     // 256 símbolos para mayor alcance >5m
+	config[2] = 9;                // Preamble code 9 (válido para canal 5)
+	config[3] = PAC8;            // PAC16 requerido para PREAMBLE_256
+	config[4] = DATARATE_6_8MB;   // Data rate alta
+	config[5] = PHR_MODE_STANDARD;// PHR estándar
+	config[6] = PHR_RATE_850KB;   // PHR rate baja para mayor robustez
 	
 	// Determinar si usar MCP23008 (pines 0-7 = MCP23008)
 	_useMCP = (csPin <= 7 || rstPin <= 7);
