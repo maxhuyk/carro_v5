@@ -295,28 +295,7 @@ bool debe_corregir(float angulo, float umbral) {
 // Función para calcular umbral dinámico basado en distancia
 float calcular_umbral_dinamico(float distancia_mm, float umbral_min, float umbral_max, 
                                float dist_min, float dist_max) {
-    /*
-    Calcula un umbral dinámico basado en la distancia al TAG.
-    
-    Parámetros:
-    - distancia_mm: distancia actual al TAG en milímetros
-    - umbral_min: umbral mínimo (para distancia cercana) - más estricto
-    - umbral_max: umbral máximo (para distancia lejana) - más tolerante
-    - dist_min: distancia mínima de referencia (1.5m = 1500mm)
-    - dist_max: distancia máxima de referencia (10m = 10000mm)
-    
-    Retorna:
-    - float: umbral calculado dinámicamente
-    
-    Lógica:
-    - A 1.5m: umbral mínimo (más estricto, ej. 5°) 
-    - A 10m: umbral máximo (más tolerante, ej. 25°)
-    - Entre 1.5m y 10m: interpolación lineal
-    
-    Razón: Cerca del objetivo, pequeños errores angulares causan gran 
-    desviación, por lo que necesitamos ser más estrictos. Lejos del 
-    objetivo, pequeños errores tienen poco impacto.
-    */
+
     
     // Limitar distancia al rango válido
     if (distancia_mm <= dist_min) {

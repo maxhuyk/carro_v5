@@ -3,6 +3,7 @@
 #include "MotorController.h"
 #include "control.h"
 #include <Arduino.h>
+#include <cmath>
 
 // Variables estáticas para mantener estado entre llamadas
 static bool control_initialized = false;
@@ -15,6 +16,14 @@ static float y_anterior = 0.0;
 static float velocidad_actual = 0;
 static float correccion_anterior = 0; // Para suavizado de correcciones PID
 static int ciclo = 0;
+
+// Variables para sistema de seguridad por pérdida de señal
+static bool signal_lost = false;
+static unsigned long signal_lost_time = 0;
+static float last_valid_distance = 0;
+static float last_valid_correction = 0;
+static int last_valid_velocity = 0;
+static bool was_moving_when_lost = false;
 
 // Variables para debug de frecuencia
 static unsigned long control_execution_count = 0;
@@ -187,13 +196,85 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
     }
         
         // ###########################################################
-        // PASO 1: Verificar datos válidos (SOLO para modo 1 - SEGUIMIENTO)
+        // PASO 1: Verificar datos válidos y sistema de seguridad
         // ###########################################################
         if (data != nullptr && data->data_valid) {
             //Serial.println("Datos completos recibidos");
             float* distancias = data->distancias;
             
-            // DEBUG: Verificar si las distancias son válidas
+            // SISTEMA DE SEGURIDAD: Verificar si hay valores NaN o señales perdidas
+            bool signal_valid = true;
+            for(int i = 0; i < 3; i++) {
+                if(isnan(distancias[i]) || distancias[i] <= 0 || distancias[i] > 40000) {
+                    signal_valid = false;
+                    Serial.printf("[SIGNAL_LOST] Sensor %d: %.1f (NaN o fuera de rango)\n", i, distancias[i]);
+                    break;
+                }
+            }
+            
+            if (!signal_valid) {
+                // SEÑAL PERDIDA - Activar sistema de seguridad
+                if (!signal_lost) {
+                    // Primera vez que se pierde la señal
+                    signal_lost = true;
+                    signal_lost_time = millis();
+                    last_valid_distance = (distancias_previas_valid) ? 
+                        (distancias_previas[0] + distancias_previas[1]) / 2.0 : DISTANCIA_FALLBACK + 1000;
+                    was_moving_when_lost = (velocidad_actual > 0);
+                    
+                    Serial.printf("[SIGNAL_LOST] Señal perdida. Última distancia: %.1f mm\n", last_valid_distance);
+                }
+                
+                // Determinar comportamiento según distancia
+                if (last_valid_distance < DISTANCIA_FALLBACK) {
+                    // CERCA: Detenerse inmediatamente
+                    Serial.println("[SAFETY] Cerca del objetivo - DETENIENDO INMEDIATAMENTE");
+                    motor_enviar_pwm(0, 0);
+                    velocidad_actual = 0;
+                    return;
+                } else {
+                    // LEJOS: Continuar en la misma dirección por TIMEOUT_FALLBACK segundos
+                    unsigned long time_since_lost = millis() - signal_lost_time;
+                    if (time_since_lost < (TIMEOUT_FALLBACK * 1000) && was_moving_when_lost) {
+                        // Continuar con última corrección y velocidad reducida
+                        Serial.printf("[SAFETY] Lejos - Continuando %.1fs más (%.1f/%.1f)\n", 
+                                     (TIMEOUT_FALLBACK * 1000 - time_since_lost) / 1000.0,
+                                     time_since_lost / 1000.0, TIMEOUT_FALLBACK);
+                        
+                        // Aplicar control de emergencia con valores guardados
+                        if (VELOCIDAD_FALLBACK > 0.0) {
+                            float vel_izq, vel_der, giro_normalizado;
+                            auto velocidades_result = calcular_velocidades_diferenciales(
+                                VELOCIDAD_FALLBACK,
+                                last_valid_correction,
+                                VELOCIDAD_MAXIMA
+                            );
+                            vel_izq = velocidades_result.vel_izq;
+                            vel_der = velocidades_result.vel_der;
+                            
+                            Serial.printf("[EMERGENCY] Velocidades: L=%d, R=%d\n", (int)vel_izq, (int)vel_der);
+                            enviar_pwm(vel_izq, vel_der);
+                        } else {
+                            detener();
+                        }
+                        return;
+                    } else {
+                        // Timeout alcanzado - Detenerse
+                        Serial.println("[SAFETY] Timeout alcanzado sin recuperar señal - DETENIENDO");
+                        motor_enviar_pwm(0, 0);
+                        velocidad_actual = 0;
+                        return;
+                    }
+                }
+            } else {
+                // SEÑAL VÁLIDA - Restablecer sistema de seguridad si estaba activo
+                if (signal_lost) {
+                    Serial.println("[SIGNAL_RECOVERED] Señal recuperada - Reanudando control normal");
+                    signal_lost = false;
+                }
+            }
+            
+            // DEBUG: Verificar si las distancias son válidas (check adicional)
             bool distancias_validas = true;
             for(int i = 0; i < 3; i++) {
                 if(distancias[i] <= 0 || distancias[i] > 40000) { // Fuera de rango razonable
@@ -356,12 +437,66 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                 Serial.printf("[MOTOR_OUTPUT] Enviando velocidades: L=%d, R=%d (max_permitida=%d)\n", 
                               (int)vel_izq, (int)vel_der, VELOCIDAD_MAXIMA);
                 enviar_pwm(vel_izq, vel_der);
+                
+                // Guardar valores válidos para sistema de seguridad
+                last_valid_distance = distancia_al_tag;
+                last_valid_correction = correccion;
+                last_valid_velocity = velocidad_avance;
             } else {
                 detener();
+                
+                // Guardar valores válidos para sistema de seguridad (velocidad = 0)
+                last_valid_distance = distancia_al_tag;
+                last_valid_correction = correccion;
+                last_valid_velocity = 0;
             }
             
         } else {
-            Serial.println("Aún no hay datos válidos");
+            // NO HAY DATOS VÁLIDOS - También activar sistema de seguridad
+            Serial.println("No hay datos válidos disponibles");
+            
+            if (!signal_lost) {
+                // Primera vez que se pierden los datos
+                signal_lost = true;
+                signal_lost_time = millis();
+                last_valid_distance = (distancias_previas_valid) ? 
+                    (distancias_previas[0] + distancias_previas[1]) / 2.0 : DISTANCIA_FALLBACK + 1000;
+                was_moving_when_lost = (velocidad_actual > 0);
+                
+                Serial.printf("[DATA_LOST] Datos perdidos. Última distancia: %.1f mm\n", last_valid_distance);
+            }
+            
+            // Aplicar la misma lógica de seguridad
+            if (last_valid_distance < DISTANCIA_FALLBACK) {
+                Serial.println("[SAFETY] Sin datos y cerca - DETENIENDO");
+                motor_enviar_pwm(0, 0);
+                velocidad_actual = 0;
+            } else {
+                unsigned long time_since_lost = millis() - signal_lost_time;
+                if (time_since_lost < (TIMEOUT_FALLBACK * 1000) && was_moving_when_lost) {
+                    Serial.printf("[SAFETY] Sin datos pero lejos - Continuando %.1fs más\n", 
+                                 (TIMEOUT_FALLBACK * 1000 - time_since_lost) / 1000.0);
+                    
+                    if (VELOCIDAD_FALLBACK > 0.0) {
+                        float vel_izq, vel_der;
+                        auto velocidades_result = calcular_velocidades_diferenciales(
+                            VELOCIDAD_FALLBACK,
+                            last_valid_correction,
+                            VELOCIDAD_MAXIMA
+                        );
+                        vel_izq = velocidades_result.vel_izq;
+                        vel_der = velocidades_result.vel_der;
+                        
+                        enviar_pwm(vel_izq, vel_der);
+                    } else {
+                        detener();
+                    }
+                } else {
+                    Serial.println("[SAFETY] Timeout sin datos - DETENIENDO");
+                    motor_enviar_pwm(0, 0);
+                    velocidad_actual = 0;
+                }
+            }
         }
 }
 

@@ -59,9 +59,6 @@
 
 #define INTEGRAL_MAX 20.0   // Reducido para evitar windup
 
-// Control de suavidad adicional
-#define MAX_GIRO_POR_SEGUNDO 60.0  // Máximo 60°/segundo de corrección total
-#define FACTOR_SUAVIZADO_GIRO 0.7  // Factor de suavizado para transiciones (0.0-1.0)
 
 // #################################################################
 // CONTROL DE VELOCIDAD LINEAL POR DISTANCIA
