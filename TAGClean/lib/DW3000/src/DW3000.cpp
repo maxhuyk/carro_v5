@@ -181,50 +181,71 @@ void DW3000Class::init() {
  Writes the initial configuration to the chip
 */
 void DW3000Class::writeSysConfig() {
-    int usr_cfg = (STDRD_SYS_CONFIG & 0xFFF) | (config[5] << 3) | (config[6] << 4);
+    Serial.println("[DW3000] writeSysConfig() START");
+    Serial.print("  Config (ch, pre, code, pac, dr, phrMode, phrRate) = ");
+    Serial.print(config[0]); Serial.print(", "); Serial.print(config[1]); Serial.print(", ");
+    Serial.print(config[2]); Serial.print(", "); Serial.print(config[3]); Serial.print(", ");
+    Serial.print(config[4]); Serial.print(", "); Serial.print(config[5]); Serial.print(", ");
+    Serial.println(config[6]);
 
+    int usr_cfg = (STDRD_SYS_CONFIG & 0xFFF) | (config[5] << 3) | (config[6] << 4);
     write(GEN_CFG_AES_LOW_REG, 0x10, usr_cfg);
 
     if (config[2] > 24) {
         Serial.println("[ERROR] SCP ERROR! TX & RX Preamble Code higher than 24!");
     }
 
-    int otp_write = 0x1400;
+    bool isLongPreamble = (config[1] == PREAMBLE_256 || config[1] == PREAMBLE_512 ||
+                           config[1] == PREAMBLE_1024 || config[1] == PREAMBLE_1536 ||
+                           config[1] == PREAMBLE_2048 || config[1] == PREAMBLE_4096);
 
-    if (config[1] >= 256) {
-        otp_write |= 0x04;
+    if (isLongPreamble && (config[3] == PAC4 || config[3] == PAC8)) {
+        Serial.print("[DW3000][ADAPT] PAC too small for long preamble. Upgrading PAC to 16. Was ");
+        Serial.println(config[3]);
+        config[3] = PAC16;
+    }
+    if (isLongPreamble && config[4] == DATARATE_6_8MB) {
+        Serial.println("[DW3000][ADAPT] Using long preamble at 6.8 Mbps; lowering to 850 kbps for lock robustness.");
+        config[4] = DATARATE_850KB;
     }
 
+    int otp_write = 0x1400;
+    if (isLongPreamble) {
+        otp_write |= 0x04;
+    }
+    write(OTP_IF_REG, 0x08, otp_write);
+    Serial.print("  OTP_IF (init) = 0x"); Serial.println(otp_write, HEX);
 
-    write(OTP_IF_REG, 0x08, otp_write); //set OTP config
-    write(DRX_REG, 0x00, 0x00, 1); //reset DTUNE0_CONFIG
+    write(DRX_REG, 0x00, 0x00, 1); // reset DTUNE0_CONFIG first byte
+    write(DRX_REG, 0x00, config[3]); // write PAC config
 
-    write(DRX_REG, 0x0, config[3]);
-
-    //64 = STS length
     write(STS_CFG_REG, 0x0, 64 / 8 - 1);
-
     write(GEN_CFG_AES_LOW_REG, 0x29, 0x00, 1);
-
     write(DRX_REG, 0x0C, 0xAF5F584C);
 
-    int chan_ctrl_val = read(GEN_CFG_AES_HIGH_REG, 0x14);  //Fetch and adjust CHAN_CTRL data
+    int chan_ctrl_val = read(GEN_CFG_AES_HIGH_REG, 0x14);
+    int chan_ctrl_before = chan_ctrl_val;
     chan_ctrl_val &= (~0x1FFF);
-
-    chan_ctrl_val |= config[0]; //Write RF_CHAN
-
-    chan_ctrl_val |= 0x1F00 & (config[2] << 8);
-    chan_ctrl_val |= 0xF8 & (config[2] << 3);
-    chan_ctrl_val |= 0x06 & (0x01 << 1);
-
-    write(GEN_CFG_AES_HIGH_REG, 0x14, chan_ctrl_val);  //Write new CHAN_CTRL data with updated values
+    chan_ctrl_val |= (config[0] & 0x7);
+    chan_ctrl_val |= (0x1F00 & (config[2] << 8));
+    chan_ctrl_val |= (0x00F8 & (config[2] << 3));
+    chan_ctrl_val |= (0x0006 & (0x01 << 1));
+    write(GEN_CFG_AES_HIGH_REG, 0x14, chan_ctrl_val);
+    Serial.print("  CHAN_CTRL before=0x"); Serial.print(chan_ctrl_before, HEX);
+    Serial.print(" after=0x"); Serial.println(chan_ctrl_val, HEX);
 
     int tx_fctrl_val = read(GEN_CFG_AES_LOW_REG, 0x24);
-
-    tx_fctrl_val |= (config[1] << 12); //Add preamble length
-    tx_fctrl_val |= (config[4] << 10); //Add data rate
-
+    int tx_fctrl_before = tx_fctrl_val;
+    tx_fctrl_val &= ~(0xF << 12);
+    tx_fctrl_val &= ~(0x3 << 10);
+    tx_fctrl_val |= ((config[1] & 0xF) << 12);
+    tx_fctrl_val |= ((config[4] & 0x3) << 10);
     write(GEN_CFG_AES_LOW_REG, 0x24, tx_fctrl_val);
+    Serial.print("  TX_FCTRL before=0x"); Serial.print(tx_fctrl_before, HEX);
+    Serial.print(" after=0x"); Serial.println(tx_fctrl_val, HEX);
+
+    write(DRX_REG, 0x02, 0x81);
+    Serial.println("[DW3000] writeSysConfig() END");
 
     write(DRX_REG, 0x02, 0x81);
 

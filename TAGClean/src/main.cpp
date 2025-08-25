@@ -6,19 +6,7 @@
 #include <SparkFun_BNO080_Arduino_Library.h>
 #include <math.h>
 
-// --- Utilidad de escaneo I2C para diagnosticar BNO080 ---
-static void scanI2C(TwoWire &wire) {
-    Serial.println("[I2C] Escaneando bus...");
-    uint8_t found = 0;
-    for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
-        wire.beginTransmission(addr);
-        if (wire.endTransmission() == 0) {
-            Serial.printf("[I2C] Dispositivo encontrado en 0x%02X\n", addr);
-            found++;
-        }
-    }
-    if (!found) Serial.println("[I2C] Ningún dispositivo detectado");
-}
+// (Escaneo I2C removido para versión simplificada del TAG)
 
 // Configuración de botones
 #define BTN_RIGHT  35
@@ -616,40 +604,7 @@ void setup() {
     digitalWrite(5, LOW);
     Serial.begin(500000);
 
-    Wire.begin(21, 22);
-    delay(200); // mayor espera de power-up
-    Wire.flush();
-    Wire.setClock(400000); // probar 400k (si falla, la librería baja internamente)
-    Wire.setTimeout(50 / portTICK_PERIOD_MS);
-    scanI2C(Wire);
-    uint8_t candidateAddrs[] = {0x4B, 0x4A}; // Direcciones típicas BNO080 / BNO085
-    for (uint8_t attempt = 0; attempt < 3 && !bnoAvailable; ++attempt) {
-        for (uint8_t i = 0; i < sizeof(candidateAddrs); ++i) {
-            uint8_t addr = candidateAddrs[i];
-            Serial.printf("[BNO080] Intento %u addr 0x%02X...\n", attempt + 1, addr);
-            if (bno.begin(addr, Wire)) {
-                bnoAvailable = true;
-                bnoAddressInUse = addr;
-                break;
-            }
-            delay(40);
-        }
-    }
-    if (bnoAvailable) {
-        Serial.printf("[BNO080] Detectado en 0x%02X - TILT habilitado\n", bnoAddressInUse);
-        bno.calibrateAll();
-        bno.enableRotationVector(50);
-        bno.enableStabilityClassifier(100);
-        bno.enableStepCounter(200);
-        Serial.println(F("LinearAccelerometer enabled, Output in form x, y, z, accuracy, in m/s^2"));
-        Serial.println(F("Gyro enabled, Output in form x, y, z, accuracy, in radians per second"));
-        Serial.println(F("Rotation vector, Output in form i, j, k, real, accuracy"));
-    } else {
-        Serial.println("[BNO080] NO detectado tras reintentos - TILT deshabilitado (cuaterniones = -1)");
-    }
-    // Activar clasificadores adicionales necesarios
-    bno.enableStabilityClassifier(100); // estados de estabilidad
-    bno.enableStepCounter(200);         // contador de pasos
+    // (Inicialización I2C y búsqueda BNO080 removidas)
 
 
 
