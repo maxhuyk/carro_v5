@@ -171,8 +171,8 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
     // ###########################################################
     if (data != nullptr && data->data_valid) {
         
-        uint8_t modo = (uint8_t)data->control_data[1]; // MODO está en control_data[1]
-        uint8_t joystick = (uint8_t)data->buttons_data[0]; // JOYSTICK está en buttons_data[0]
+        modo = (uint8_t)data->control_data[1]; // MODO está en control_data[1]
+        joystick = (uint8_t)data->buttons_data[0]; // JOYSTICK está en buttons_data[0]
 
         
     }
@@ -235,7 +235,14 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                             vel_der = velocidades_result.vel_der;
                             
                             Serial.printf("[EMERGENCY] Velocidades: L=%d, R=%d\n", (int)vel_izq, (int)vel_der);
-                            enviar_pwm(vel_izq, vel_der);
+                            // Gating por modo (faltaba en esta rama)
+                            if (modo == 1) {
+                                enviar_pwm(vel_izq, vel_der);
+                            } else if (modo == 3) {
+                                processJoystickControl(joystick);
+                            } else {
+                                detener();
+                            }
                         } else {
                             detener();
                         }
@@ -466,8 +473,16 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                 // Las velocidades ya vienen como PWM de calcular_velocidades_diferenciales
                 Serial.printf("[MOTOR_OUTPUT] Enviando velocidades: L=%d, R=%d (max_permitida=%d)\n", 
                               (int)vel_izq, (int)vel_der, VELOCIDAD_MAXIMA);
-                enviar_pwm(vel_izq, vel_der);
-                
+                //enviar_pwm(vel_izq, vel_der);
+                if (modo == 1) {
+                            enviar_pwm(vel_izq, vel_der);
+                        }
+                        else if(modo == 3) {
+                            processJoystickControl(joystick);
+                        }
+                        else {
+                            detener();
+                        }
                 // Guardar valores válidos para sistema de seguridad
                 last_valid_distance = distancia_al_tag;
                 last_valid_correction = correccion;
@@ -516,11 +531,14 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                         );
                         vel_izq = velocidades_result.vel_izq;
                         vel_der = velocidades_result.vel_der;
-                        if (modo == 1) {
+                       if (modo == 1) {
                             enviar_pwm(vel_izq, vel_der);
                         }
                         else if(modo == 3) {
                             processJoystickControl(joystick);
+                        }
+                        else {
+                            detener();
                         }
                     } else {
                         detener();

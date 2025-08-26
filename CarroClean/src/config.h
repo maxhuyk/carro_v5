@@ -89,7 +89,7 @@
 // #################################################################
 // CONTROL DE VELOCIDAD Y ACELERACIÓN
 // #################################################################
-#define VELOCIDAD_MAXIMA 60  // Incrementado de 45 a 70 para mejor velocidad de seguimiento
+#define VELOCIDAD_MAXIMA 75  // Incrementado de 45 a 70 para mejor velocidad de seguimiento
 #define ACELERACION_MAXIMA 10  // Para acelerar (arranque suave)
 #define DESACELERACION_MAXIMA 35  // Para frenar (frenado más rápido)
 
