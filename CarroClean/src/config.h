@@ -35,6 +35,20 @@
 #define MAX_DELTA 6        // Delta del ángulo
 
 // #################################################################
+// RECUPERACIÓN RÁPIDA TRAS PÉRDIDA DE SEÑAL
+// #################################################################
+// Tiempo (ms) durante el cual se relaja el limitador de variación tras recuperar
+#define RECOVERY_GRACE_MS 700
+// Número de ciclos mínimos tras recuperación antes de volver a parámetros normales
+#define RECOVERY_K_CYCLES 20
+// Covarianza inicial grande para forzar rápida adaptación del Kalman al nuevo estado
+#define RECOVERY_P_INIT 1e6
+// Q temporal alto para permitir que el Kalman siga las primeras mediciones sin inercia
+#define RECOVERY_Q_TEMP 1.0f
+// Si se desea permitir limitador con delta ampliado en lugar de saltarlo, usar este valor
+#define RECOVERY_DELTA_POS 1000
+
+// #################################################################
 // UMBRAL DINÁMICO BASADO EN DISTANCIA
 // #################################################################
 #define UMBRAL_MINIMO 25.0       // Umbral a 1.5m (cerca) - más tolerante

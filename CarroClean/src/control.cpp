@@ -24,6 +24,11 @@ static float last_valid_distance = 0;
 static float last_valid_correction = 0;
 static int last_valid_velocity = 0;
 static bool was_moving_when_lost = false;
+// Variables de recuperación rápida
+static bool in_recovery = false;
+static unsigned long recovery_start_ms = 0;
+static int recovery_cycles = 0;
+static float saved_normal_Q = KALMAN_Q; // Para restaurar Q tras recuperación
 
 // Variables para debug de frecuencia
 static unsigned long control_execution_count = 0;
@@ -248,6 +253,31 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                 if (signal_lost) {
                     Serial.println("[SIGNAL_RECOVERED] Señal recuperada - Reanudando control normal");
                     signal_lost = false;
+                    // ===== Inicio de secuencia de recuperación rápida =====
+                    // 1. Tomar primera medición válida y replicarla
+                    float primera_medicion[3];
+                    for (int i = 0; i < 3; i++) {
+                        // Si la medición actual no es válida, usar distancias_previas
+                        primera_medicion[i] = distancias[i];
+                    }
+                    // Sembrar buffers de media móvil copiando el valor en toda la ventana
+                    // (Reiniciamos media y Kalman)
+                    media_movil_init(3, MEDIA_MOVIL_VENTANA);
+                    // Rellenar manualmente ejecutando tantas veces como ventana para fijar estado
+                    float dummy[3];
+                    for (int r = 0; r < MEDIA_MOVIL_VENTANA; r++) {
+                        media_movil_actualizar(primera_medicion, dummy);
+                    }
+                    // 2. Kalman: estado = medición, P grande, Q temporal alta
+                    saved_normal_Q = kalman_get_Q();
+                    kalman_set_Q(RECOVERY_Q_TEMP);
+                    kalman_force_state(primera_medicion, RECOVERY_P_INIT);
+                    // 3. Bandera de recuperación para saltar/relajar limitador
+                    in_recovery = true;
+                    recovery_start_ms = millis();
+                    recovery_cycles = 0;
+                    Serial.printf("[RECOVERY] Iniciada. Q=%.3f -> %.3f, P=%.1f, ventana=%d\n", 
+                                  saved_normal_Q, RECOVERY_Q_TEMP, (double)RECOVERY_P_INIT, MEDIA_MOVIL_VENTANA);
                 }
             }
             
@@ -269,11 +299,23 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
             
             // Paso 1.5: Limito variación entre ciclos (anti-salto)
             if (distancias_previas_valid) {
-                float distancias_limitadas[3];
-                limitar_variacion(distancias, distancias_previas, distancias_limitadas, 3, MAX_DELTA_POS);
-                // Copiar resultado de vuelta a distancias
-                for(int i = 0; i < 3; i++) {
-                    distancias[i] = distancias_limitadas[i];
+                bool saltar_limitador = false;
+                if (in_recovery) {
+                    unsigned long elapsed = millis() - recovery_start_ms;
+                    if (elapsed < RECOVERY_GRACE_MS) {
+                        saltar_limitador = true; // Permitimos salto inicial para converger rápido
+                    } else {
+                        // Después de la gracia, aplicar limitador ampliado algunos ciclos
+                        saltar_limitador = false;
+                    }
+                }
+                if (!saltar_limitador) {
+                    float distancias_limitadas[3];
+                    float delta = (in_recovery ? RECOVERY_DELTA_POS : MAX_DELTA_POS);
+                    limitar_variacion(distancias, distancias_previas, distancias_limitadas, 3, delta);
+                    for(int i = 0; i < 3; i++) {
+                        distancias[i] = distancias_limitadas[i];
+                    }
                 }
             }
 
@@ -299,6 +341,17 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
             float distancias_kalman[3];
             kalman_filtrar(distancias_media, distancias_kalman);
             Serial.printf("Las distancias POR KALMAN en mm son: %.1f,%.1f,%.1f\n", distancias_kalman[0], distancias_kalman[1], distancias_kalman[2]);
+
+            if (in_recovery) {
+                recovery_cycles++;
+                // Condición para finalizar recuperación: suficientes ciclos y pasó la gracia
+                if (recovery_cycles >= RECOVERY_K_CYCLES && (millis() - recovery_start_ms) > RECOVERY_GRACE_MS) {
+                    // Restaurar Q normal
+                    kalman_set_Q(saved_normal_Q);
+                    in_recovery = false;
+                    Serial.printf("[RECOVERY_DONE] Q restaurada a %.4f tras %d ciclos (%lums)\n", saved_normal_Q, recovery_cycles, millis()-recovery_start_ms);
+                }
+            }
             
             
             // ###########################################################

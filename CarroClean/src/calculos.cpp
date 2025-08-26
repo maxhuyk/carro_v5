@@ -78,6 +78,21 @@ void kalman_filtrar(float* mediciones, float* resultado) {
     }
 }
 
+// ===== Funciones auxiliares para gestión dinámica del Kalman (recuperación) =====
+void kalman_force_state(float* mediciones, float P_init) {
+    // Fija el estado a las mediciones actuales y pone una covarianza inicial alta
+    for (int i = 0; i < kalman_num_sensores; i++) {
+        kalman_x[i] = mediciones[i];
+        kalman_P[i] = P_init; // Covarianza grande -> ganancia cercana a 1 en primeras iteraciones
+    }
+}
+
+void kalman_set_Q(float Q) {
+    kalman_Q = Q;
+}
+
+float kalman_get_Q() { return kalman_Q; }
+
 // Funciones para controlador PID
 void pid_init(PIDController* pid, float kp, float ki, float kd, float setpoint, float alpha, float salida_maxima, float integral_maxima) {
     pid->kp = kp;

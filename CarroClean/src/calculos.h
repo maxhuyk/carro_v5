@@ -8,6 +8,9 @@ void media_movil_actualizar(float* nuevos_valores, float* resultado);
 // Funciones para filtro Kalman
 void kalman_init(int n_sensores, float Q, float R);
 void kalman_filtrar(float* mediciones, float* resultado);
+void kalman_force_state(float* mediciones, float P_init);
+void kalman_set_Q(float Q);
+float kalman_get_Q();
 
 // Estructura para controlador PID
 struct PIDController {
