@@ -29,6 +29,9 @@ static bool was_moving_when_lost = false;
 static unsigned long control_execution_count = 0;
 static unsigned long last_frequency_check = 0;
 
+uint8_t modo = 0;
+uint8_t joystick = 0;
+
 // Función para procesar control por joystick (MODO 3)
 void processJoystickControl(uint8_t joystick_value) {
     const int velocidad_manual = VELOCIDAD_MANUAL; // Usar valor del config.h
@@ -162,37 +165,11 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
     // PASO 0: Verificar MODO del TAG - CONTROL BASADO EN MODO
     // ###########################################################
     if (data != nullptr && data->data_valid) {
+        
         uint8_t modo = (uint8_t)data->control_data[1]; // MODO está en control_data[1]
         uint8_t joystick = (uint8_t)data->buttons_data[0]; // JOYSTICK está en buttons_data[0]
+
         
-        Serial.printf("[MODE_CONTROL] Modo=%d, Joystick=%d\n", modo, joystick);
-        
-        switch (modo) {
-            case 0: // APAGADO
-                Serial.println("[MODE_CONTROL] MODO 0: APAGADO - Deteniendo motores");
-                motor_enviar_pwm(0, 0);
-                return; // Salir de la función, no procesar más control
-                
-            case 1: // SEGUIMIENTO (control normal)
-                Serial.println("[MODE_CONTROL] MODO 1: SEGUIMIENTO - Ejecutando control normal");
-                // Continuar con el control normal (no return aquí)
-                break;
-                
-            case 2: // PAUSA
-                Serial.println("[MODE_CONTROL] MODO 2: PAUSA - Deteniendo motores");
-                motor_enviar_pwm(0, 0);
-                return; // Salir de la función, no procesar más control
-                
-            case 3: // MANUAL (control por joystick)
-                Serial.printf("[MODE_CONTROL] MODO 3: MANUAL - Control por joystick (valor=%d)\n", joystick);
-                processJoystickControl(joystick);
-                return; // Salir de la función, el joystick ya controló los motores
-                
-            default:
-                Serial.printf("[MODE_CONTROL] MODO DESCONOCIDO: %d - Deteniendo motores por seguridad\n", modo);
-                motor_enviar_pwm(0, 0);
-                return; // Salir de la función por seguridad
-        }
     }
         
         // ###########################################################
@@ -387,16 +364,16 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
             // Calcular velocidad objetivo basada en la distancia (SOLO AVANCE)
             int velocidad_objetivo;
             
-            if (error_distancia > 500) {
+            if (error_distancia > 5000) {
                 // Muy lejos (>500mm): velocidad alta constante
                 velocidad_objetivo = VELOCIDAD_MAXIMA;
             }
             else if (error_distancia > 100) {
                 // Lejos (100-500mm): velocidad proporcional
-                float velocidad_proporcional = 20 + (error_distancia - 100) * 0.1; // Base + proporcional
+                float velocidad_proporcional = 20 + (error_distancia - 100) * 0.016; // Base + proporcional
                 velocidad_objetivo = constrain(velocidad_proporcional, 20, VELOCIDAD_MAXIMA);
             } 
-            else if (error_distancia < -300) {
+            else if (error_distancia < 50) {
                 // Está MUY cerca (>300mm más cerca del objetivo): parar completamente
                 velocidad_objetivo = 0;
             }
@@ -486,8 +463,12 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                         );
                         vel_izq = velocidades_result.vel_izq;
                         vel_der = velocidades_result.vel_der;
-                        
-                        enviar_pwm(vel_izq, vel_der);
+                        if (modo == 1) {
+                            enviar_pwm(vel_izq, vel_der);
+                        }
+                        else if(modo == 3) {
+                            processJoystickControl(joystick);
+                        }
                     } else {
                         detener();
                     }
