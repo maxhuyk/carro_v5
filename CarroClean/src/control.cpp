@@ -56,19 +56,20 @@ void processJoystickControl(uint8_t joystick_value) {
             vel_der = velocidad_manual;
             break;
             
-        case 2: // (0110) - Adelante + Izquierda
-            vel_izq = velocidad_manual / 2;  // Rueda izquierda más lenta
-            vel_der = velocidad_manual;      // Rueda derecha más rápida
+        case 2: // (0110) - Adelante + Izquierda (INVERTIDO -> Adelante + Derecha físico)
+            // Invertimos porque se detectó que los giros estaban al revés en hardware
+            vel_izq = velocidad_manual;        // Rueda izquierda más rápida (para girar a la derecha física)
+            vel_der = velocidad_manual / 2;    // Rueda derecha más lenta
             break;
             
-        case 3: // (0010) - Solo izquierda (giro en el lugar)
-            vel_izq = -velocidad_manual / 2; // Rueda izquierda atrás
-            vel_der = velocidad_manual / 2;  // Rueda derecha adelante
+        case 3: // (0010) - Solo izquierda (INVERTIDO -> giro derecha físico en el lugar)
+            vel_izq =  velocidad_manual / 2;   // adelante
+            vel_der = -velocidad_manual / 2;   // atrás
             break;
             
-        case 4: // (0011) - Izquierda + Atrás
-            vel_izq = -velocidad_manual / 2; // Rueda izquierda reversa lenta
-            vel_der = -velocidad_manual;     // Rueda derecha reversa rápida
+        case 4: // (0011) - Izquierda + Atrás (INVERTIDO -> Atrás + Derecha físico)
+            vel_izq = -velocidad_manual;       // reversa rápida
+            vel_der = -velocidad_manual / 2;   // reversa lenta
             break;
             
         case 5: // (0001) - Solo atrás
@@ -76,14 +77,19 @@ void processJoystickControl(uint8_t joystick_value) {
             vel_der = -velocidad_manual;
             break;
             
-        case 6: // (1001) - Derecha + Atrás
-            vel_izq = -velocidad_manual;     // Rueda izquierda reversa rápida
-            vel_der = -velocidad_manual / 2; // Rueda derecha reversa lenta
+        case 6: // (1001) - Derecha + Atrás (INVERTIDO -> Atrás + Izquierda físico)
+            vel_izq = -velocidad_manual / 2;  // reversa lenta
+            vel_der = -velocidad_manual;      // reversa rápida
             break;
             
-        case 7: // (1000) - Solo derecha (giro en el lugar)
-            vel_izq = velocidad_manual / 2;  // Rueda izquierda adelante
-            vel_der = -velocidad_manual / 2; // Rueda derecha atrás
+        case 7: // (1000) - Solo derecha (INVERTIDO -> giro izquierda físico en el lugar)
+            vel_izq = -velocidad_manual / 2;  // atrás
+            vel_der =  velocidad_manual / 2;  // adelante
+            break;
+
+        case 8: // (1100) - Adelante + Derecha (nuevo) (INVERTIDO -> Adelante + Izquierda físico)
+            vel_izq = velocidad_manual / 2;   // Rueda izquierda más lenta
+            vel_der = velocidad_manual;       // Rueda derecha más rápida
             break;
             
         default:
@@ -93,32 +99,9 @@ void processJoystickControl(uint8_t joystick_value) {
             break;
     }
     
-    // Para valores negativos, necesitamos manejar la dirección
-    // motor_enviar_pwm espera valores 0-100, así que convertimos valores negativos
-    int pwm_izq, pwm_der;
-    
-    if (vel_izq >= 0) {
-        pwm_izq = vel_izq;
-    } else {
-        // Para reversa, necesitamos usar valores negativos o una lógica especial
-        // Por ahora, limitamos a solo adelante por seguridad
-        pwm_izq = 0;
-        Serial.println("[JOYSTICK] WARNING: Reversa deshabilitada por seguridad");
-    }
-    
-    if (vel_der >= 0) {
-        pwm_der = vel_der;
-    } else {
-        // Para reversa, necesitamos usar valores negativos o una lógica especial
-        // Por ahora, limitamos a solo adelante por seguridad
-        pwm_der = 0;
-        Serial.println("[JOYSTICK] WARNING: Reversa deshabilitada por seguridad");
-    }
-    
-    Serial.printf("[JOYSTICK] Joy=%d -> L=%d, R=%d\n", joystick_value, pwm_izq, pwm_der);
-    
-    // Enviar comando a los motores
-    motor_enviar_pwm(pwm_izq, pwm_der);
+    // Enviar directamente (ahora motor_enviar_pwm soporta signo)
+    Serial.printf("[JOYSTICK] Joy=%d -> L=%d, R=%d\n", joystick_value, vel_izq, vel_der);
+    motor_enviar_pwm(vel_izq, vel_der);
 }
 
 // Función de inicialización del sistema de control
@@ -475,20 +458,24 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                               (int)vel_izq, (int)vel_der, VELOCIDAD_MAXIMA);
                 //enviar_pwm(vel_izq, vel_der);
                 if (modo == 1) {
-                            enviar_pwm(vel_izq, vel_der);
-                        }
-                        else if(modo == 3) {
-                            processJoystickControl(joystick);
-                        }
-                        else {
-                            detener();
-                        }
+                    enviar_pwm(vel_izq, vel_der);
+                } else if (modo == 3) {
+                    // Ignoramos resultado autónomo y usamos joystick
+                    processJoystickControl(joystick);
+                } else {
+                    detener();
+                }
                 // Guardar valores válidos para sistema de seguridad
                 last_valid_distance = distancia_al_tag;
                 last_valid_correction = correccion;
                 last_valid_velocity = velocidad_avance;
             } else {
-                detener();
+                if (modo == 3) {
+                    // Aunque la velocidad automática sea 0, en modo joystick obedecemos al usuario
+                    processJoystickControl(joystick);
+                } else {
+                    detener();
+                }
                 
                 // Guardar valores válidos para sistema de seguridad (velocidad = 0)
                 last_valid_distance = distancia_al_tag;

@@ -6,7 +6,7 @@
 // Pines para los DRV8701 (ambos motores)
 #define ENABLE_MOTORS 14  // Pin único de enable para ambos motores
 #define PWML1 26
-#define PWML2 27
+#define PWML2 25  // Restaurado (era 25 en rama clean) para habilitar canal reversa izquierdo
 // Pines para el DRV8701 (motor derecho)
 #define PWMR1 33
 #define PWMR2 32
@@ -247,25 +247,24 @@ void emergencyStop() {
 
 // Función para control directo desde sistema de control
 void motor_enviar_pwm(int izq, int der) {
-    // ACTUALIZAR lastCommandTime para evitar timeout de 2 segundos
+    // Ahora acepta -100..100 (signo = dirección). Mantener compatibilidad con llamadas previas (0..100)
     lastCommandTime = millis();
-    
-    // Usar executeMotorCommand EXACTAMENTE como el código UART que SÍ funciona
-    // Mapear de 0-100 a 0-255 (como hace el Python)
-    int left_speed = map(izq, 0, 100, 0, 255);
-    int right_speed = map(der, 0, 100, 0, 255);
-    
-    // Crear comando exactamente como el UART
+
+    izq = constrain(izq, -100, 100);
+    der = constrain(der, -100, 100);
+
+    int left_speed = map(abs(izq), 0, 100, 0, 255) * (izq < 0 ? -1 : 1);
+    int right_speed = map(abs(der), 0, 100, 0, 255) * (der < 0 ? -1 : 1);
+
     MotorCommand cmd;
     cmd.command_type = 'M';
     cmd.motor_left_speed = left_speed;
     cmd.motor_right_speed = right_speed;
     cmd.emergency_stop = false;
-    
-    Serial.printf("[MOTOR_VIA_EXECUTE] Control(%d,%d) -> UART(%d,%d)\n", 
+
+    Serial.printf("[MOTOR_VIA_EXECUTE] ControlSigned(%d,%d) -> UART(%d,%d)\n", 
                   izq, der, left_speed, right_speed);
-    
-    // Usar la función que SÍ funciona
+
     executeMotorCommand(cmd);
 }
 
