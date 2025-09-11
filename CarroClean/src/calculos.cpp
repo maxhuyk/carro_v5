@@ -344,26 +344,30 @@ float suavizar_velocidad(float velocidad_actual, float velocidad_objetivo, float
     }
 }
 
-// Nueva función con aceleración y desaceleración separadas
-float suavizar_velocidad_avanzada(float velocidad_actual, float velocidad_objetivo, 
-                                  float aceleracion_maxima, float desaceleracion_maxima) {
-    float diferencia = velocidad_objetivo - velocidad_actual;
-    
-    if (diferencia > 0) {
-        // Necesita acelerar
-        float incremento = min(diferencia, aceleracion_maxima);
-        return velocidad_actual + incremento;
+
+// Suavizado avanzado con aceleración y desaceleración separadas
+float suavizar_velocidad_avanzada(float velocidad_actual, float velocidad_objetivo, float aceleracion_maxima, float desaceleracion_maxima) {
+    // Si queremos aumentar velocidad
+    if (velocidad_actual < velocidad_objetivo) {
+        float delta = velocidad_objetivo - velocidad_actual;
+        float paso = aceleracion_maxima;
+        if (paso > delta) paso = delta;
+        return velocidad_actual + paso;
     }
-    else if (diferencia < 0) {
-        // Necesita frenar/desacelerar
-        float decremento = min(abs(diferencia), desaceleracion_maxima);
-        return velocidad_actual - decremento;
+
+    // Si queremos reducir velocidad
+    if (velocidad_actual > velocidad_objetivo) {
+        float delta = velocidad_actual - velocidad_objetivo; // positivo
+        float paso = desaceleracion_maxima;
+        if (paso > delta) paso = delta;
+        return velocidad_actual - paso;
     }
-    else {
-        // Ya está en la velocidad objetivo
-        return velocidad_objetivo;
-    }
+
+    // Igual
+    return velocidad_actual;
 }
+
+
 
 // Función auxiliar para clipping
 float clip(float value, float min_val, float max_val) {
@@ -402,78 +406,4 @@ VelocidadesDiferenciales calcular_velocidades_diferenciales(float v_lineal, floa
     return resultado;
 }
 
-// Función para limitar velocidad angular (suavizado de correcciones PID)
-float limitar_velocidad_angular(float correccion_actual, float correccion_anterior, 
-                                float max_cambio_por_ciclo, float factor_suavizado) {
-    /*
-    Limita la velocidad de cambio de la corrección angular para evitar movimientos bruscos.
-    
-    Parámetros:
-    - correccion_actual: corrección que quiere aplicar el PID
-    - correccion_anterior: corrección aplicada en el ciclo anterior
-    - max_cambio_por_ciclo: máximo cambio permitido por ciclo (ej. 3°)
-    - factor_suavizado: factor de suavizado (0.0-1.0, donde 1.0 = sin suavizado)
-    
-    Retorna:
-    - float: corrección limitada y suavizada
-    */
-    
-    // Calcular el cambio deseado
-    float cambio_deseado = correccion_actual - correccion_anterior;
-    
-    // Limitar el cambio máximo por ciclo
-    float cambio_limitado;
-    if (cambio_deseado > max_cambio_por_ciclo) {
-        cambio_limitado = max_cambio_por_ciclo;
-    } else if (cambio_deseado < -max_cambio_por_ciclo) {
-        cambio_limitado = -max_cambio_por_ciclo;
-    } else {
-        cambio_limitado = cambio_deseado;
-    }
-    
-    // Aplicar suavizado adicional
-    float cambio_suavizado = cambio_limitado * factor_suavizado;
-    
-    // Calcular nueva corrección
-    float correccion_suavizada = correccion_anterior + cambio_suavizado;
-    
-    return correccion_suavizada;
-}
 
-// Función para calcular salida máxima del PID basada en velocidad actual
-float calcular_pid_salida_max_por_velocidad(float velocidad_actual, 
-                                            float vel_baja, float vel_alta,
-                                            float salida_max_baja, float salida_max_alta) {
-    /*
-    Calcula la salida máxima del PID angular basada en la velocidad actual del vehículo.
-    A menor velocidad, permite correcciones más agresivas.
-    A mayor velocidad, limita las correcciones para seguridad.
-    
-    Parámetros:
-    - velocidad_actual: velocidad actual del vehículo (PWM)
-    - vel_baja: velocidad considerada "baja" (ej. 10 PWM)
-    - vel_alta: velocidad considerada "alta" (ej. 40 PWM)
-    - salida_max_baja: máxima corrección a velocidad baja (ej. 15°)
-    - salida_max_alta: máxima corrección a velocidad alta (ej. 3°)
-    
-    Retorna:
-    - float: salida máxima calculada dinámicamente
-    
-    Lógica:
-    - A velocidad ≤ vel_baja: salida_max_baja (corrección agresiva)
-    - A velocidad ≥ vel_alta: salida_max_alta (corrección suave)
-    - Entre vel_baja y vel_alta: interpolación lineal
-    */
-    
-    // Limitar velocidad al rango válido
-    if (velocidad_actual <= vel_baja) {
-        return salida_max_baja;
-    } else if (velocidad_actual >= vel_alta) {
-        return salida_max_alta;
-    } else {
-        // Interpolación lineal entre vel_baja y vel_alta
-        float factor = (velocidad_actual - vel_baja) / (vel_alta - vel_baja);
-        float salida_max_dinamica = salida_max_baja - factor * (salida_max_baja - salida_max_alta);
-        return salida_max_dinamica;
-    }
-}
