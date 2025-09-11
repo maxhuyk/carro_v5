@@ -1,21 +1,12 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// #################################################################
-// COMUNICACIÓN UART
-// #################################################################
-#define DATA_PORT "/dev/ttyAMA0"  // Placeholder - será diferente en ESP32
-#define BAUDRATE 500000
 
 // #################################################################
 // CONFIGURACIÓN DE SENSORES
 // #################################################################
 #define N_SENSORES 3
 
-// #################################################################
-// TIEMPO DE ESPERA
-// #################################################################
-#define TIEMPO_ESPERA 0.0 // 10ms
 
 // #################################################################
 // PASO 2: FILTRO DE MEDIA MOVIL
@@ -65,12 +56,6 @@
 #define PID_SETPOINT 0.0
 #define PID_ALPHA 0.5       // Mayor filtrado del error
 #define PID_SALIDA_MAX 10.0 // Máxima salida del PID
-// PID ADAPTATIVO POR VELOCIDAD
-#define PID_SALIDA_MAX_BAJA_VEL 15.0   // Máxima corrección a velocidad baja (agresivo)
-#define PID_SALIDA_MAX_ALTA_VEL 3.0    // Máxima corrección a velocidad alta (suave)
-#define VELOCIDAD_UMBRAL_BAJA 10       // Velocidad considerada "baja" para PID agresivo
-#define VELOCIDAD_UMBRAL_ALTA 40       // Velocidad considerada "alta" para PID suave
-
 #define INTEGRAL_MAX 20.0   // Reducido para evitar windup
 
 
@@ -105,11 +90,6 @@
 #define VELOCIDAD_FALLBACK 15
 #define TIMEOUT_FALLBACK 1.0
 
-// #################################################################
-// NÚMERO DE CICLOS Y CONFIGURACIÓN
-// #################################################################
-#define NUM_CICLOS 100
-#define DISTANCIA_MINIMA_PARADA 0.9
 
 // Posiciones de sensores (matriz 3x3)
 extern const float SENSOR_POSICIONES[3][3];

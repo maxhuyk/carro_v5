@@ -1,5 +1,4 @@
 #include "MotorController.h"
-#include "RPiComm.h"
 #include <ArduinoJson.h>
 
 // ========== MOTOR PWM DEFINITIONS ==========
@@ -27,8 +26,6 @@ static unsigned long lastCommandTime = 0;
 static const unsigned long COMMAND_TIMEOUT = 2000; // 2 segundos
 static bool directControlMode = false; // Nueva variable para modo directo
 
-// Declaración de función
-void executeMotorCommand(const MotorCommand& cmd);
 
 // ========== MOTOR PWM BASE FUNCTIONS ==========
 // Función para desactivar completamente los motores
@@ -41,7 +38,6 @@ void disableMotors() {
     Serial.println("[PWM] Motores desactivados completamente");
 }
 
-// (enableMotors eliminado: enable se maneja implícitamente con PWM/ENABLE_MOTORS)
 
 // pwm: 0 a 100, dir: true=adelante, false=atrás (COMO EL TEST ORIGINAL)
 void setMotorL(int pwm, bool dir) {
@@ -66,7 +62,7 @@ void setMotorL(int pwm, bool dir) {
     }
 }
 
-// setMotorL_direct eliminado (no usado)
+
 
 void setMotorR(int pwm, bool dir) {
     pwm = constrain(pwm, 0, 100);
@@ -90,7 +86,7 @@ void setMotorR(int pwm, bool dir) {
     }
 }
 
-// setMotorR_direct eliminado (no usado)
+
 
 // Inicializa los pines de los drivers (sin test)
 void setupMotorPWM() {
@@ -128,7 +124,7 @@ void setupMotorPWM() {
 // ========== MOTOR CONTROLLER FUNCTIONS ==========
 
 void setupMotorController() {
-    RPiComm_setup();
+    //RPiComm_setup();
     setupMotorPWM();
     disableMotors();
     
@@ -138,99 +134,6 @@ void setupMotorController() {
     Serial.println("[MotorController] Initialized");
 }
 
-void processSerialCommands() {
-    // Si estamos en modo control directo, no procesar comandos de RPi ni timeouts
-    if (directControlMode) {
-        return;
-    }
-    
-    MotorCommand cmd;
-    
-    // Verificar si hay comandos de la Raspberry Pi
-    if (RPiComm_receiveCommand(cmd)) {
-        lastCommandTime = millis();
-        
-        if (cmd.command_type == 'M') {
-            // Comando de motor
-            executeMotorCommand(cmd);
-        }
-        else if (cmd.command_type == 'S') {
-            // Parada de emergencia
-            emergencyStop();
-        }
-    }
-    
-    // Timeout de seguridad: si no hay comunicación, parar motores
-    if (motorsEnabled && (millis() - lastCommandTime > COMMAND_TIMEOUT)) {
-        emergencyStop();
-        Serial.println("[MotorController] TIMEOUT: Sin comunicación con RPi, parando motores");
-    }
-    
-    // Enviar heartbeat periódico
-    RPiComm_sendHeartbeat();
-}
-
-// sendUWBData eliminado (no usado)
-
-void executeMotorCommand(const MotorCommand& cmd) {
-    if (cmd.emergency_stop) {
-        emergencyStop();
-        return;
-    }
-    
-    // CONVERTIR valores de GUI (-255 a +255) con zona muerta real
-    int left_speed = constrain(cmd.motor_left_speed, -255, 255);
-    int right_speed = constrain(cmd.motor_right_speed, -255, 255);
-    
-    // DEBUG - Solo mostrar si hay movimiento para reducir spam
-    bool has_movement = (left_speed != 0 || right_speed != 0);
-    if (has_movement) {
-        Serial.printf("[MOTOR_CMD] GUI values: L=%d, R=%d\n", left_speed, right_speed);
-    }
-    
-    // Definir zona muerta real (PWM duty mínimo para moverse)
-    const int DEADZONE_PWM = 60; // duty mínimo real (0-255)
-    // Mapeo: GUI 0 -> 0, GUI 1-255 -> 60-255 (duty)
-    int left_pwm, right_pwm;
-    if (abs(left_speed) == 0) {
-        left_pwm = 0;
-    } else {
-        left_pwm = map(abs(left_speed), 1, 255, DEADZONE_PWM, 100); // 100 en escala 0-100
-        if (left_pwm < DEADZONE_PWM) left_pwm = DEADZONE_PWM;
-    }
-    if (abs(right_speed) == 0) {
-        right_pwm = 0;
-    } else {
-        right_pwm = map(abs(right_speed), 1, 255, DEADZONE_PWM, 100);
-        if (right_pwm < DEADZONE_PWM) right_pwm = DEADZONE_PWM;
-    }
-    bool left_dir = (left_speed >= 0);
-    bool right_dir = (right_speed >= 0);
-    
-    // Solo mostrar conversión si hay movimiento
-    if (has_movement) {
-        Serial.printf("[MOTOR_CMD] Converted: L_PWM=%d(dir=%s), R_PWM=%d(dir=%s)\n", 
-                     left_pwm, left_dir ? "FWD" : "REV", 
-                     right_pwm, right_dir ? "FWD" : "REV");
-    }
-    
-    // Verificar si ambos motores están parados
-    bool motors_stopped = (left_pwm == 0 && right_pwm == 0);
-    
-    setMotorL(left_pwm, left_dir);
-    setMotorR(right_pwm, right_dir);
-    
-    // Notificar estado final al UWB
-    if (motors_stopped) {
-        motorsEnabled = false;
-        
-    } else {
-        motorsEnabled = true;
-        
-    }
-}
-
-// setMotorSpeed eliminado (no usado)
 
 void emergencyStop() {
     disableMotors();
@@ -242,7 +145,7 @@ void emergencyStop() {
     doc["timestamp"] = millis();
     String output;
     serializeJson(doc, output);
-    RPiComm_sendJSON(output.c_str());
+    //RPiComm_sendJSON(output.c_str());
 }
 
 // Función para control directo desde sistema de control
@@ -255,32 +158,14 @@ void motor_enviar_pwm(int izq, int der) {
 
     int left_speed = map(abs(izq), 0, 100, 0, 255) * (izq < 0 ? -1 : 1);
     int right_speed = map(abs(der), 0, 100, 0, 255) * (der < 0 ? -1 : 1);
-
-    MotorCommand cmd;
-    cmd.command_type = 'M';
-    cmd.motor_left_speed = left_speed;
-    cmd.motor_right_speed = right_speed;
-    cmd.emergency_stop = false;
-
+    
     Serial.printf("[MOTOR_VIA_EXECUTE] ControlSigned(%d,%d) -> UART(%d,%d)\n", 
                   izq, der, left_speed, right_speed);
 
-    executeMotorCommand(cmd);
+    
 }
 
-void motor_detener() {
-    // ACTUALIZAR lastCommandTime para evitar timeout
-    lastCommandTime = millis();
-    
-    MotorCommand cmd;
-    cmd.command_type = 'M';
-    cmd.motor_left_speed = 0;
-    cmd.motor_right_speed = 0;
-    cmd.emergency_stop = false;
-    
-    executeMotorCommand(cmd);
-    Serial.println("[MOTOR_STOP] Motores detenidos via executeMotorCommand");
-}
+
 
 void setupMotorControlDirect() {
     directControlMode = true;

@@ -45,17 +45,6 @@ bool debe_corregir(float angulo, float umbral);
 float calcular_umbral_dinamico(float distancia_mm, float umbral_min, float umbral_max, 
                                float dist_min, float dist_max);
 
-// Función para limitar velocidad angular (suavizado de correcciones PID)
-float limitar_velocidad_angular(float correccion_actual, float correccion_anterior, 
-                                float max_cambio_por_ciclo, float factor_suavizado);
-
-// Función para calcular salida máxima del PID basada en velocidad actual
-float calcular_pid_salida_max_por_velocidad(float velocidad_actual, 
-                                            float vel_baja, float vel_alta,
-                                            float salida_max_baja, float salida_max_alta);
-
-// Función para suavizar velocidad (control de aceleración)
-float suavizar_velocidad(float velocidad_actual, float velocidad_objetivo, float aceleracion_maxima);
 
 // Nueva función con aceleración y desaceleración separadas
 float suavizar_velocidad_avanzada(float velocidad_actual, float velocidad_objetivo, 

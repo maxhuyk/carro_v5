@@ -347,10 +347,7 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
             // ###########################################################
             // PASO 4: Mediante trilateración obtengo la ubicación del tag
             // ###########################################################
-            //float pos_tag3d[3];
-            //trilateracion_3d(SENSOR_POSICIONES, distancias, pos_tag3d);
-            //float pos_tag3d_media[3];
-            //trilateracion_3d(SENSOR_POSICIONES, distancias_media, pos_tag3d_media);
+            
             float pos_tag3d_kalman[3];
             trilateracion_3d(SENSOR_POSICIONES, distancias_kalman, pos_tag3d_kalman);
 

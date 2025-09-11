@@ -5,7 +5,6 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include "MotorController.h"
-#include "RPiComm.h"
 #include "control.h"
 #include "config.h"
 
@@ -108,18 +107,7 @@ void updateSharedDataAndRunControl(float distances[NUM_ANCHORS], bool anchor_sta
         // Actualizar datos del TAG si están disponibles
         bool tagDataValid = (millis() - lastDataReceived) < 1000;
         if (tagDataValid) {
-            // Calcular yaw desde quaternion del TAG
-            float yaw = atan2(2.0 * (receivedData.quatReal * receivedData.quatK + receivedData.quatI * receivedData.quatJ),
-                             1.0 - 2.0 * (receivedData.quatJ * receivedData.quatJ + receivedData.quatK * receivedData.quatK));
-            yaw = yaw * 180.0 / PI; // Convertir a grados
             
-            // Llenar datos IMU: [PITCH, ROLL, YAW, MOV, VEL, ACCEL_Z]
-            sharedCarroData.imu_data[0] = 0.0; // PITCH (no disponible)
-            sharedCarroData.imu_data[1] = 0.0; // ROLL (no disponible)
-            sharedCarroData.imu_data[2] = yaw; // YAW
-            sharedCarroData.imu_data[3] = 0.0; // MOV (no disponible)
-            sharedCarroData.imu_data[4] = 0.0; // VEL (no disponible)
-            sharedCarroData.imu_data[5] = 0.0; // ACCEL_Z (no disponible)
             
             // Llenar datos de control: [BAT_TAG, MODO]
             sharedCarroData.control_data[0] = receivedData.batteryVoltage_mV / 1000.0; // BAT_TAG
@@ -253,15 +241,9 @@ void loop() {
 
   
 
-  ///////////////////////////////////////////////////////////////////////
-  //                                                                   //
-  //                          Seccion Raspberry                        //
-  //                                                                   //
-  ///////////////////////////////////////////////////////////////////////
+  
 
-  // Procesar comandos de la Raspberry Pi
-  processSerialCommands();
-  // Enviar datos a la RPi (datos en tiempo real desde UWBCore + TAG)
+  
   static unsigned long lastMeasurementCount = 0;
   unsigned long currentCount = UWBCore_getMeasurementCount();
   
@@ -312,36 +294,23 @@ void loop() {
       // Actualizar datos compartidos Y ejecutar control inmediatamente
       updateSharedDataAndRunControl(distances, anchor_status, currentCount);
       
-      // Enviar a RPi con datos del TAG
+
       
   // Verificar si tenemos datos válidos del TAG (menos de 1 segundo de antigüedad)
       bool tagDataValid = (millis() - lastDataReceived) < 1000;
       float tagBatteryVoltage = tagDataValid ? (receivedData.batteryVoltage_mV / 1000.0) : 0.0;
       uint8_t tagModo = tagDataValid ? receivedData.modo : 0;
       uint8_t tagJoystick = tagDataValid ? receivedData.joystick : 0;
-  // Quaternion
-  float tagQuatI = tagDataValid ? receivedData.quatI : 0.0f;
-  float tagQuatJ = tagDataValid ? receivedData.quatJ : 0.0f;
-  float tagQuatK = tagDataValid ? receivedData.quatK : 0.0f;
-  float tagQuatReal = tagDataValid ? receivedData.quatReal : 1.0f;
-  uint8_t tagQuatAcc = tagDataValid ? receivedData.quatAccuracy : 0;
-      
-    // Enviar datos extendidos que incluyen información del TAG (incluye estabilidad y pasos)
-      RPiComm_sendRawUWBDataWithTAG(distances, anchor_status, 20.0, currentCount,
-              tagBatteryVoltage, tagModo, tagJoystick,
-              tagQuatI, tagQuatJ, tagQuatK, tagQuatReal, tagQuatAcc,
-              tagDataValid ? receivedData.bnoStability : 0,
-              tagDataValid ? receivedData.stepCount : 0,
-                    tagDataValid);
-      
+  
+    
       lastMeasurementCount = currentCount;
       
       // Mostrar información ocasionalmente (cada ~2 segundos a frecuencia UWB)
       static int send_count = 0;
       if (++send_count % 20 == 0) { // Ajustado para frecuencia real del UWB
-          Serial.printf("[UWB+CONTROL] UWB[%.1f,%.1f,%.1f] TAG[%.2fV,%d,%d, qAcc=%d] Valid:%s Control:SYNC\n", 
+          Serial.printf("[UWB+CONTROL] UWB[%.1f,%.1f,%.1f] TAG[%.2fV,%d] Valid:%s Control:SYNC\n", 
                         distances[0], distances[1], distances[2],
-                        tagBatteryVoltage, tagModo, tagJoystick, tagQuatAcc,
+                        tagBatteryVoltage, tagModo, tagJoystick, 
                         tagDataValid ? "SI" : "NO");
       }
   }
@@ -359,7 +328,6 @@ void printControlStatus() {
         if (xSemaphoreTake(dataMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             Serial.printf("[CONTROL] Distancias UWB: S1=%.1fmm, S2=%.1fmm, S3=%.1fmm\n", 
                          sharedCarroData.distancias[0], sharedCarroData.distancias[1], sharedCarroData.distancias[2]);
-            Serial.printf("[CONTROL] IMU Yaw: %.1f°\n", sharedCarroData.imu_data[2]);
             Serial.printf("[CONTROL] TAG Batería: %.2fV, Modo: %.0f\n", 
                          sharedCarroData.control_data[0], sharedCarroData.control_data[1]);
             Serial.printf("[CONTROL] Joystick: %.0f, Datos válidos: %s\n", 
