@@ -1,15 +1,6 @@
 {
 	"folders": [
 		{
-			"path": "Carro"
-		},
-		{
-			"path": "TAG"
-		},
-		{
-			"path": "raspberry"
-		},
-		{
 			"name": "CarroClean",
 			"path": "CarroClean"
 		},
