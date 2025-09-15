@@ -17,14 +17,6 @@ typedef struct {
     uint8_t modo;               // Modo (0-7)
     uint8_t joystick;           // Joystick (0-7)
     uint32_t timestamp;         // Timestamp
-    // Quaternion del TAG (BNO080)
-    float quatI;
-    float quatJ;
-    float quatK;
-    float quatReal;
-    uint8_t quatAccuracy;       // 0..3
-    uint8_t bnoStability;       // Estado de estabilidad BNO080
-    uint32_t stepCount;         // Conteo de pasos
 } __attribute__((packed)) EspNowData;
 
 // Variables globales para datos recibidos del TAG
@@ -54,8 +46,7 @@ void onDataReceived(const uint8_t * mac, const uint8_t *incomingData, int len) {
         if (totalPacketsReceived % 40 == 0) {
             float voltage = receivedData.batteryVoltage_mV / 1000.0;
             Serial.printf("[ESP-NOW] Recibido #%lu: Batería=%.2fV, Modo=%d, Joy=%d, qAcc=%d, Stab=%u, Steps=%lu\n", 
-                          totalPacketsReceived, voltage, receivedData.modo, receivedData.joystick, receivedData.quatAccuracy,
-                          (unsigned)receivedData.bnoStability, (unsigned long)receivedData.stepCount);
+                          totalPacketsReceived, voltage, receivedData.modo, receivedData.joystick);
         }
     } else {
         Serial.printf("[ESP-NOW] Tamaño de datos incorrecto: %d bytes (esperado %d)\n", len, sizeof(EspNowData));
