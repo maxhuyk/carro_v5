@@ -10,20 +10,23 @@
 
 
 
+// Namespace para encapsular estado de comunicación ESP-NOW
+namespace EspNowComm {
+    typedef struct {
+        uint8_t version = 1;
+        uint16_t batteryVoltage_mV;
+        uint8_t modo;
+        uint8_t joystick;
+        uint32_t timestamp;
+    } __attribute__((packed)) EspNowData;
 
-// Estructura de datos para ESP-NOW (debe coincidir con el TAG)
-typedef struct {
-    uint16_t batteryVoltage_mV; // Voltaje en milivoltios
-    uint8_t modo;               // Modo (0-7)
-    uint8_t joystick;           // Joystick (0-7)
-    uint32_t timestamp;         // Timestamp
-} __attribute__((packed)) EspNowData;
+    volatile EspNowData receivedData = {};
+    volatile bool newDataReceived = false;
+    volatile unsigned long lastDataReceived = 0;
+    volatile unsigned long totalPacketsReceived = 0;
+}
 
-// Variables globales para datos recibidos del TAG
-volatile EspNowData receivedData = {0, 0, 0, 0};
-volatile bool newDataReceived = false;
-volatile unsigned long lastDataReceived = 0;
-volatile unsigned long totalPacketsReceived = 0;
+
 
 // Variables para el sistema de control sincronizado con UWB
 CarroData sharedCarroData = {0};
@@ -36,20 +39,20 @@ void motorControlCallback(float velocidad_izq, float velocidad_der);
 
 // Callback para recepción de datos ESP-NOW
 void onDataReceived(const uint8_t * mac, const uint8_t *incomingData, int len) {
-    if (len == sizeof(EspNowData)) {
-        memcpy((void*)&receivedData, incomingData, sizeof(EspNowData));
-        newDataReceived = true;
-        lastDataReceived = millis();
-        totalPacketsReceived++;
-        
+    if (len == sizeof(EspNowComm::EspNowData)) {
+        memcpy((void*)&EspNowComm::receivedData, incomingData, sizeof(EspNowComm::EspNowData));
+        EspNowComm::newDataReceived = true;
+        EspNowComm::lastDataReceived = millis();
+        EspNowComm::totalPacketsReceived++;
+
         // Solo mostrar cada 40 paquetes para no saturar consola (cada 2 segundos)
-        if (totalPacketsReceived % 40 == 0) {
-            float voltage = receivedData.batteryVoltage_mV / 1000.0;
-            Serial.printf("[ESP-NOW] Recibido #%lu: Batería=%.2fV, Modo=%d, Joy=%d, qAcc=%d, Stab=%u, Steps=%lu\n", 
-                          totalPacketsReceived, voltage, receivedData.modo, receivedData.joystick);
+        if (EspNowComm::totalPacketsReceived % 40 == 0) {
+            float voltage = EspNowComm::receivedData.batteryVoltage_mV / 1000.0;
+            Serial.printf("[ESP-NOW] Recibido #%lu: Batería=%.2fV, Modo=%d, Joy=%d, qAcc=%d, Stab=%u, Steps=%lu\n",
+                          EspNowComm::totalPacketsReceived, voltage, EspNowComm::receivedData.modo, EspNowComm::receivedData.joystick);
         }
     } else {
-        Serial.printf("[ESP-NOW] Tamaño de datos incorrecto: %d bytes (esperado %d)\n", len, sizeof(EspNowData));
+        Serial.printf("[ESP-NOW] Tamaño de datos incorrecto: %d bytes (esperado %d)\n", len, sizeof(EspNowComm::EspNowData));
     }
 }
 
@@ -96,16 +99,16 @@ void updateSharedDataAndRunControl(float distances[NUM_ANCHORS], bool anchor_sta
         }
         
         // Actualizar datos del TAG si están disponibles
-        bool tagDataValid = (millis() - lastDataReceived) < 1000;
+        bool tagDataValid = (millis() - EspNowComm::lastDataReceived) < 1000;
         if (tagDataValid) {
             
             
             // Llenar datos de control: [BAT_TAG, MODO]
-            sharedCarroData.control_data[0] = receivedData.batteryVoltage_mV / 1000.0; // BAT_TAG
-            sharedCarroData.control_data[1] = receivedData.modo; // MODO
-            
+            sharedCarroData.control_data[0] = EspNowComm::receivedData.batteryVoltage_mV / 1000.0; // BAT_TAG
+            sharedCarroData.control_data[1] = EspNowComm::receivedData.modo; // MODO
+
             // Llenar datos de botones: [JOY_D, JOY_A, JOY_I, JOY_T]
-            sharedCarroData.buttons_data[0] = receivedData.joystick; // JOY_D (dirección)
+            sharedCarroData.buttons_data[0] = EspNowComm::receivedData.joystick; // JOY_D (dirección)
             sharedCarroData.buttons_data[1] = 0.0; // JOY_A (no disponible)
             sharedCarroData.buttons_data[2] = 0.0; // JOY_I (no disponible)
             sharedCarroData.buttons_data[3] = 0.0; // JOY_T (no disponible)
@@ -121,7 +124,7 @@ void updateSharedDataAndRunControl(float distances[NUM_ANCHORS], bool anchor_sta
         // Esto garantiza que el control se ejecute a la misma frecuencia que las mediciones
         
         // En modo 0 (APAGADO), imprimir distancias DW3000 para diagnóstico
-        if (tagDataValid && receivedData.modo == 0) {
+        if (tagDataValid && EspNowComm::receivedData.modo == 0) {
             static unsigned long lastPrintMode0 = 0;
             if (millis() - lastPrintMode0 > 1000) { // Imprimir cada segundo en modo 0
                 Serial.printf("[MODO_0_DEBUG] Distancias DW3000: ");
@@ -248,14 +251,14 @@ void loop() {
 
 
   // Procesar datos recibidos de ESP-NOW
-    if (newDataReceived) {
-        newDataReceived = false;
-        
+    if (EspNowComm::newDataReceived) {
+        EspNowComm::newDataReceived = false;
+
         // Aquí puedes procesar los datos recibidos del TAG
-        float tagBatteryVoltage = receivedData.batteryVoltage_mV / 1000.0;
-        uint8_t tagModo = receivedData.modo;
-        uint8_t tagJoystick = receivedData.joystick;
-        
+        float tagBatteryVoltage = EspNowComm::receivedData.batteryVoltage_mV / 1000.0;
+        uint8_t tagModo = EspNowComm::receivedData.modo;
+        uint8_t tagJoystick = EspNowComm::receivedData.joystick;
+
         // Ejemplo: usar los datos recibidos para control del motor o envío a RPi
         // processTagCommand(tagModo, tagJoystick);
         // sendTagDataToRPi(tagBatteryVoltage, tagModo, tagJoystick);
@@ -264,12 +267,12 @@ void loop() {
     // Verificar timeout de datos ESP-NOW
     static unsigned long lastEspNowStatus = 0;
     if (millis() - lastEspNowStatus >= 5000) { // Cada 5 segundos
-        unsigned long timeSinceLastData = millis() - lastDataReceived;
+        unsigned long timeSinceLastData = millis() - EspNowComm::lastDataReceived;
         if (timeSinceLastData > 1000) { // Más de 1 segundo sin datos
             Serial.printf("[ESP-NOW] WARNING: Sin datos del TAG por %lu ms\n", timeSinceLastData);
         } else {
             Serial.printf("[ESP-NOW] OK: Último dato hace %lu ms, Total recibidos: %lu\n", 
-                          timeSinceLastData, totalPacketsReceived);
+                          timeSinceLastData, EspNowComm::totalPacketsReceived);
         }
         lastEspNowStatus = millis();
     }
@@ -288,12 +291,12 @@ void loop() {
 
       
   // Verificar si tenemos datos válidos del TAG (menos de 1 segundo de antigüedad)
-      bool tagDataValid = (millis() - lastDataReceived) < 1000;
-      float tagBatteryVoltage = tagDataValid ? (receivedData.batteryVoltage_mV / 1000.0) : 0.0;
-      uint8_t tagModo = tagDataValid ? receivedData.modo : 0;
-      uint8_t tagJoystick = tagDataValid ? receivedData.joystick : 0;
-  
-    
+      bool tagDataValid = (millis() - EspNowComm::lastDataReceived) < 1000;
+      float tagBatteryVoltage = tagDataValid ? (EspNowComm::receivedData.batteryVoltage_mV / 1000.0) : 0.0;
+      uint8_t tagModo = tagDataValid ? EspNowComm::receivedData.modo : 0;
+      uint8_t tagJoystick = tagDataValid ? EspNowComm::receivedData.joystick : 0;
+
+
       lastMeasurementCount = currentCount;
       
       // Mostrar información ocasionalmente (cada ~2 segundos a frecuencia UWB)
