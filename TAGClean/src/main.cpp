@@ -3,17 +3,18 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <Wire.h>
-#include <SparkFun_BNO080_Arduino_Library.h>
 #include <math.h>
+#include <ArduinoOTA.h>
+#include <esp_sleep.h>
 
 // (Escaneo I2C removido para versión simplificada del TAG)
 
 // Configuración de botones
-#define BTN_RIGHT  35
-#define BTN_LEFT   39
-#define BTN_UP     14
-#define BTN_DOWN   26
-#define BTN_OK     25
+#define BTN_RIGHT  35       //ahora es joystick y
+#define BTN_LEFT   39       //ahora es encendido
+#define BTN_UP     14       //ahora es
+#define BTN_DOWN   25       //ahora es joystick x 
+#define BTN_OK     26       
 
 // Configuración del divisor de voltaje de la batería LiPo
 #define BATTERY_PIN 36
@@ -29,24 +30,21 @@
 uint8_t carroMacAddress[] = {0x68, 0x25, 0xDD, 0x20, 0x14, 0x18}; // Placeholder - cambiar por MAC real
 // mac del otro esp32  68:25:DD:20:14:18
 //0x00, 0x4B, 0x12, 0x32, 0x8E, 0xFC
-// Estructura de datos para ESP-NOW (optimizada para tamaño)
-typedef struct {
-    uint16_t batteryVoltage_mV; // Voltaje en milivoltios (0-65535 mV = 0-65.535V)
-    uint8_t modo;               // Modo (0-255, pero usaremos 0-7)
-    uint8_t joystick;           // Joystick (0-255, pero usaremos 0-7)
-    uint32_t timestamp;         // Timestamp para verificar frescura de datos
-    // Quaternion del BNO080 (unidad: normalizado)
-    float quatI;
-    float quatJ;
-    float quatK;
-    float quatReal;
-    uint8_t quatAccuracy;       // 0..3
-    uint8_t bnoStability;       // Estado de estabilidad BNO080
-    uint32_t stepCount;         // Conteo de pasos
-} __attribute__((packed)) EspNowData;
+// Namespace para encapsular estado de comunicación ESP-NOW (alineado con CarroClean)
+namespace EspNowComm {
+    typedef struct {
+        uint8_t  version = 1;       // Versión del protocolo
+        uint16_t batteryVoltage_mV; // Voltaje en milivoltios (0-65535 mV)
+        uint8_t  modo;              // Modo (0..4 usado)
+        uint8_t  joystick;          // Joystick (0..7)
+        uint32_t timestamp;         // Marca de tiempo
+    } __attribute__((packed)) EspNowData;
 
-EspNowData espNowData;
-volatile bool espNowSendReady = false;
+    volatile EspNowData toSend = {};           // Buffer de envío
+    volatile bool sendPending = false;         // Marcador opcional
+    volatile unsigned long lastSendMs = 0;     // Último envío
+    volatile unsigned long totalPacketsSent = 0; // Contador de envíos
+}
 
 // Sistema de modos
 enum SystemMode {
@@ -54,7 +52,6 @@ enum SystemMode {
     MODE_TRACKING = 1,  // Seguimiento
     MODE_PAUSE = 2,     // Pausa
     MODE_MANUAL = 3,    // Manual
-    MODE_TILT = 4       // Control por inclinación (BNO080)
 };
 
 // Variables del sistema de modos
@@ -91,6 +88,26 @@ ButtonState buttons[5]; // RIGHT, LEFT, UP, DOWN, OK
 
 const unsigned long LONG_PRESS_TIME = 1500; // 1.5s mejora reconocimiento
 const unsigned long DEBOUNCE_TIME   = 40;   // 40ms debounce (modo)
+// Long press especial para habilitar OTA (10s)
+const unsigned long OTA_LONG_PRESS_MS = 10000;
+// Apagado (mantener >3s)
+const unsigned long POWER_LONG_PRESS_MS = 3000; // 3s para apagar
+
+// Lecturas analógicas de los ejes reasignados
+static int analogRightRaw = 0; // BTN_RIGHT (Y)
+static int analogDownRaw  = 0; // BTN_DOWN  (X)
+static float analogRightVolt = 0.0f;
+static float analogDownVolt  = 0.0f;
+static unsigned long lastAnalogSampleMs = 0;
+static const unsigned long ANALOG_SAMPLE_INTERVAL_MS = 25; // ~40 Hz
+
+// Normalización 0..1
+static float analogRightNorm = 0.0f;
+static float analogDownNorm  = 0.0f;
+
+// Estado del botón de encendido (BTN_LEFT) para detección de long press sin interferir con latch
+static bool powerPressing = false;
+static unsigned long powerPressStart = 0;
 
 // Variables compartidas entre cores (thread-safe)
 volatile bool dw3000_data_ready = false;
@@ -105,45 +122,36 @@ SemaphoreHandle_t dw3000Semaphore = NULL;
 // Handle de la tarea DW3000
 TaskHandle_t dw3000TaskHandle = NULL;
 
-// BNO080 (SparkFun) - IMU 9DoF
-BNO080 bno;
-bool bnoReady = false;          // Streams activos
-bool bnoAvailable = false;      // IMU detectada
-uint8_t bnoAddressInUse = 0;    // Dirección que respondió
-unsigned long lastBNOPrint = 0;
-bool bnoMute = false; // true = no imprimir más IMU tras calibrar/guardar
-// Control por inclinación: baseline y salidas proporcionales
-static bool tiltBaselineSet = false;
-static float tiltZeroPitchDeg = 0.0f;
-static float tiltZeroRollDeg  = 0.0f;
+
 uint8_t motorL = 127; // 0..255 (127 = neutro)
 uint8_t motorR = 127; // 0..255 (127 = neutro)
-// Estado de calibración BNO080
-bool bnoCalibEnabled = false;
-bool bnoDCDSaved = false;
-unsigned long bnoLastCalibQuery = 0;
-const unsigned long BNO_CALIB_QUERY_INTERVAL_MS = 500; // consulta estado cada 500ms
 
-// Cache de cuaterniones para envío periódico (se actualiza cuando hay nuevos datos)
-static float lastQuatI = 0.0f;
-static float lastQuatJ = 0.0f;
-static float lastQuatK = 0.0f;
-static float lastQuatReal = 1.0f;
-static uint8_t lastQuatAccuracy = 0;
+// Estado OTA / ESP-NOW
+static bool otaModeActive = false;
+static bool espNowActive = true; // Mientras true, se envían paquetes ESP-NOW
 
-// Estado/steps BNO para enviar
-static uint8_t bnoStability = 0; // estabilidad
-static uint32_t bnoSteps = 0;    // pasos acumulados
+// Credenciales WiFi para OTA (REEMPLAZAR por las reales)
+const char* OTA_SSID = "CLAROWIFI";
+const char* OTA_PASS = "11557788";
+
+// Forward declaration
+void enterOtaMode();
+
 
 
 // ESP-NOW Callbacks
 void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
     //Serial.print("[ESP-NOW] Envío ");
     //Serial.println(status == ESP_NOW_SEND_SUCCESS ? "ÉXITO" : "FALLO");
+    if (status == ESP_NOW_SEND_SUCCESS) {
+        EspNowComm::totalPacketsSent++;
+        EspNowComm::lastSendMs = millis();
+    }
 }
 
 // Función para inicializar ESP-NOW
 bool initESPNOW() {
+    if (!espNowActive) return false; // No inicializar si se ha deshabilitado por OTA
     // Configurar WiFi en modo Station
     WiFi.mode(WIFI_STA);
     WiFi.disconnect(); // Asegurar que no esté conectado a ninguna red
@@ -185,19 +193,25 @@ bool initESPNOW() {
 
 // Función para leer estado de botones (no bloqueante)
 void readButtons() {
+    // BTN_RIGHT (0) y BTN_DOWN (3) ahora son analógicos -> excluidos del escaneo digital
+    // BTN_LEFT (1) funciona como latch de power: se maneja aparte (handlePowerButton)
     int pins[5] = {BTN_RIGHT, BTN_LEFT, BTN_UP, BTN_DOWN, BTN_OK};
     unsigned long now = millis();
 
     for (int i = 0; i < 5; i++) {
-        bool r = !digitalRead(pins[i]); // Activo en LOW
+        if (i == BTN_IDX_RIGHT || i == BTN_IDX_DOWN || i == BTN_IDX_LEFT) {
+            buttons[i].rising = false;
+            buttons[i].falling = false;
+            continue; // saltar
+        }
 
-        // Si cambia la lectura cruda, reiniciar temporizador de debounce
+        bool r = !digitalRead(pins[i]); // Activo en LOW (UP, OK)
+
         if (r != buttons[i].raw) {
             buttons[i].raw = r;
             buttons[i].lastChange = now;
         }
 
-        // Si la lectura se mantuvo estable por el tiempo de debounce, actualizar el estado estable
         if ((now - buttons[i].lastChange) >= DEBOUNCE_TIME && buttons[i].stable != buttons[i].raw) {
             buttons[i].previousStable = buttons[i].stable;
             buttons[i].stable = buttons[i].raw;
@@ -209,15 +223,66 @@ void readButtons() {
                 buttons[i].longPressFired = false;
             }
         } else {
-            // No hay cambio estable en este ciclo
             buttons[i].rising = false;
             buttons[i].falling = false;
         }
 
-        // Detección de long-press (one-shot por pulsación)
         if (buttons[i].stable && !buttons[i].longPressFired && (now - buttons[i].pressStart >= LONG_PRESS_TIME)) {
             buttons[i].longPressFired = true;
         }
+    }
+}
+
+// Lectura analógica de los nuevos ejes (RIGHT=Y, DOWN=X)
+void readAnalogAxes() {
+    unsigned long now = millis();
+    if (now - lastAnalogSampleMs < ANALOG_SAMPLE_INTERVAL_MS) return;
+    lastAnalogSampleMs = now;
+
+    analogRightRaw = analogRead(BTN_RIGHT); // ADC1 -> fiable con WiFi
+    analogDownRaw  = analogRead(BTN_DOWN);  // ADC2 -> puede dar 0 con WiFi activo
+
+    analogRightVolt = (analogRightRaw / 4095.0f) * 3.3f;
+    analogDownVolt  = (analogDownRaw  / 4095.0f) * 3.3f;
+
+    analogRightNorm = constrain(analogRightVolt / 3.3f, 0.0f, 1.0f);
+    analogDownNorm  = constrain(analogDownVolt  / 3.3f, 0.0f, 1.0f);
+}
+
+// Manejo del botón de alimentación (long press >3s apaga)
+void handlePowerButton() {
+    static unsigned long lastSample = 0;
+    unsigned long now = millis();
+    if (now - lastSample < 30) return; // ~33 Hz
+    lastSample = now;
+
+    if (!otaModeActive) {
+        // Leer estado momentáneamente poniendo INPUT
+        pinMode(BTN_LEFT, INPUT);
+        delayMicroseconds(40);
+        bool pressed = (digitalRead(BTN_LEFT) == LOW); // activo LOW
+        pinMode(BTN_LEFT, OUTPUT);
+        digitalWrite(BTN_LEFT, HIGH); // reasegurar latch
+
+        if (pressed && !powerPressing) {
+            powerPressing = true;
+            powerPressStart = now;
+        } else if (!pressed) {
+            powerPressing = false;
+        }
+
+        if (powerPressing && (now - powerPressStart >= POWER_LONG_PRESS_MS)) {
+            Serial.println("[POWER] Long press >3s detectado. Apagando...");
+            for (int i=0;i<3;i++){ digitalWrite(5, HIGH); delay(120); digitalWrite(5, LOW); delay(120);}            
+            // Cortar alimentación
+            digitalWrite(BTN_LEFT, LOW);
+            delay(500);
+            // Fallback: deep sleep si hardware no corta
+            esp_deep_sleep_start();
+        }
+    } else {
+        // En OTA, mantener HIGH (no permitir apagado accidental)
+        digitalWrite(BTN_LEFT, HIGH);
     }
 }
 
@@ -262,19 +327,7 @@ void processModeChanges() {
         resetButtonsAfterModeChange();
     }
 
-    // LEFT long press -> TILT (solo si IMU disponible)
-    if (buttons[BTN_IDX_LEFT].longPressFired) {
-        buttons[BTN_IDX_LEFT].longPressFired = false;
-        if (bnoAvailable) {
-            currentMode = MODE_TILT;
-            Serial.println("[MODE] Cambiado a TILT (inclinación)");
-            tiltBaselineSet = false;
-            motorL = motorR = 127;
-        } else {
-            Serial.println("[MODE] TILT NO disponible (BNO080 ausente)");
-        }
-        resetButtonsAfterModeChange();
-    }
+    
 
     // DOWN rising: TRACKING -> PAUSE
     if (buttons[BTN_IDX_DOWN].rising && currentMode == MODE_TRACKING) {
@@ -600,16 +653,13 @@ int getBatteryPercentage(float voltage) {
 }
 
 void setup() {
+    // Primera instrucción: asegurar alimentación habilitada por el botón de encendido (BTN_LEFT)
+    pinMode(BTN_LEFT, OUTPUT);
+    digitalWrite(BTN_LEFT, HIGH); // Mantener línea de enable en alto
+
     pinMode(5, OUTPUT); // LED en GPIO 5
     digitalWrite(5, LOW);
     Serial.begin(500000);
-
-    // (Inicialización I2C y búsqueda BNO080 removidas)
-
-
-
-
-
     Serial.println(F("LinearAccelerometer enabled, Output in form x, y, z, accuracy, in m/s^2"));
     Serial.println(F("Gyro enabled, Output in form x, y, z, accuracy, in radians per second"));
     Serial.println(F("Rotation vector, Output in form i, j, k, real, accuracy"));
@@ -623,12 +673,12 @@ void setup() {
     analogReadResolution(12);
     analogSetAttenuation(ADC_11db);
 
-    // Configurar botones
-    // NOTA: GPIO34-39 no tienen PULLUP interno. BTN_RIGHT(35) y BTN_LEFT(39) requieren pull-up externo.
-    pinMode(BTN_RIGHT, INPUT); // usar pull-up externo
-    pinMode(BTN_LEFT, INPUT);  // usar pull-up externo
+    // Configurar entradas
+    // Analógicos (sin pull-up): RIGHT=35 (ADC1), DOWN=25 (ADC2 - puede verse afectado por WiFi)
+    pinMode(BTN_RIGHT, INPUT);
+    pinMode(BTN_DOWN, INPUT);
+    // BTN_LEFT ya está como OUTPUT (latch)
     pinMode(BTN_UP, INPUT_PULLUP);
-    pinMode(BTN_DOWN, INPUT_PULLUP);
     pinMode(BTN_OK, INPUT_PULLUP);
 
     float initial_voltage = readBatteryVoltage();
@@ -644,8 +694,12 @@ void setup() {
     }
 
     // Inicializar datos ESP-NOW
-    espNowData.modo = 0;      // Modo inicial (apagado)
-    espNowData.joystick = 0;  // Joystick inicial
+    // Inicializar estructura de envío (evitar asignación a volatile)
+    EspNowComm::toSend.version = 1;
+    EspNowComm::toSend.batteryVoltage_mV = 0;
+    EspNowComm::toSend.modo = 0;      // Modo inicial (apagado)
+    EspNowComm::toSend.joystick = 0;  // Joystick inicial
+    EspNowComm::toSend.timestamp = 0;
 
     Serial.println("[TAG] Sistema iniciado en MODO APAGADO");
     Serial.println("[TAG] Presiona OK 2 seg -> SEGUIMIENTO | UP 2 seg -> MANUAL");
@@ -675,6 +729,64 @@ void setup() {
 
 
 }
+// Entrar en modo OTA (one-way hasta reinicio)
+void enterOtaMode() {
+    if (otaModeActive) return;
+    Serial.println("\n[OTA] Activando modo OTA (deshabilitando ESP-NOW)...");
+    otaModeActive = true;
+    espNowActive = false;
+
+    // Deshabilitar ESP-NOW si estaba activo
+    esp_now_deinit();
+    Serial.println("[OTA] ESP-NOW deshabilitado");
+
+    // Mantener WiFi en modo STA y conectar a la red
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(OTA_SSID, OTA_PASS);
+    Serial.printf("[OTA] Conectando a WiFi SSID='%s' ...\n", OTA_SSID);
+
+    unsigned long startConnect = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - startConnect < 10000) {
+        delay(250);
+        Serial.print('.');
+    }
+    Serial.println();
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("[OTA] WiFi conectado. IP: %s\n", WiFi.localIP().toString().c_str());
+    } else {
+        Serial.println("[OTA] No se pudo conectar a WiFi (continuará intentando en background)");
+    }
+
+    // Configurar eventos OTA
+    ArduinoOTA.onStart([](){
+        Serial.println("[OTA] Inicio de actualización");
+    });
+    ArduinoOTA.onEnd([](){
+        Serial.println("\n[OTA] Actualización completada");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total){
+        static unsigned int lastPct = 0;
+        unsigned int pct = (progress * 100) / total;
+        if (pct != lastPct) {
+            Serial.printf("[OTA] Progreso: %u%%\n", pct);
+            lastPct = pct;
+        }
+    });
+    ArduinoOTA.onError([](ota_error_t error){
+        Serial.printf("[OTA] Error %u: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+    ArduinoOTA.setHostname("TAG-UWB");
+    ArduinoOTA.begin();
+    Serial.println("[OTA] Servidor OTA listo. Mantén este modo hasta completar la actualización.");
+
+    // Encender LED fijo para indicar modo OTA
+    digitalWrite(5, HIGH);
+}
 //Given an accuracy number, print what it means
 void printAccuracyLevel(byte accuracyNumber)
 {
@@ -686,151 +798,27 @@ void printAccuracyLevel(byte accuracyNumber)
 void loop() {
     // === CORE 1 - Tareas de monitoreo y control ===
     // Activar streams como en el ejemplo (una sola vez) sin tocar setup
-    static bool imuStreamsEnabledOnce = false;
-    if (bnoAvailable && !imuStreamsEnabledOnce) {
-        bno.enableGameRotationVector(100);
-        bno.enableMagnetometer(100);
-        bnoReady = true; // IMU lista para uso en TILT
-        Serial.println(F("Calibrating. Press 's' to save to flash"));
-        Serial.println(F("Output in form x, y, z, in uTesla"));
-        imuStreamsEnabledOnce = true;
-    }
-
-    // Teclas de control de calibración/quieto
-    if (bnoAvailable && Serial.available()) {
-        byte incoming = Serial.read();
-        if (incoming == 's') {
-            bno.saveCalibration();
-            bno.requestCalibrationStatus();
-            int counter = 100; // ~100ms
-            while (true) {
-                if (--counter == 0) break;
-                if (bno.dataAvailable() == true) {
-                    if (bno.calibrationComplete() == true) {
-                        Serial.println("Calibration data successfully stored");
-                        delay(1000);
-                        // Silenciar salidas y deshabilitar streams para no ver más datos    
-                        bno.enableGameRotationVector(0); // 0 suele deshabilitar el reporte  
-                        bno.enableMagnetometer(0);
-                        bnoMute = true;
-                        Serial.println("[BNO080] Salidas silenciadas. Presiona 'c' para recalibrar cuando quieras.");
-                        break;
-                    }
-                }
-                delay(1);
-            }
-            if (counter == 0) {
-                Serial.println("Calibration data failed to store. Please try again.");       
-            }
-        } else if (incoming == 'c') {
-            // Re-entrar a modo calibración y reactivar streams
-            bno.enableGameRotationVector(100);
-            bno.enableMagnetometer(100);
-            bnoMute = false;
-            Serial.println(F("[BNO080] Modo calibración reactivado (imprimiendo de nuevo)"));
-        }
-    }
-    // Gestión manual de guardado DCD
-    if (bnoAvailable && Serial.available()) {
-        char c = (char)Serial.read();
-        if (c == 's' ) {
-            bno.saveCalibration();
-            bno.requestCalibrationStatus();
-            Serial.println(F("[BNO080] Solicitud de guardado de calibración (DCD) enviada"));
-        }
-    }
-    // Calibración condicional no bloqueante
-    auto bnoCalibrationStep = [&]() {
-        if (!bnoAvailable || !bnoReady) return;
-        // Procesa paquete si hay
-        bool hasData = bno.dataAvailable();
-        // Obtener accuracy disponibles
-        uint8_t quatAcc = bno.getQuatAccuracy();
-        uint8_t magAcc = bno.getMagAccuracy(); // válido si mag está habilitado
-
-        // Si accuracy es baja, habilitar calibración dinámica
-        if (!bnoCalibEnabled && (quatAcc < 2 || magAcc < 2)) {
-            bno.calibrateAll();
-            bnoCalibEnabled = true;
-            bnoDCDSaved = false;
-            Serial.println(F("[BNO080] Calibración dinámica activada (accuracy baja)"));     
-        }
-
-        // Cuando logramos precisión Media/Alta, guardar DCD una sola vez
-        if (bnoCalibEnabled && !bnoDCDSaved && quatAcc >= 2 && magAcc >= 2) {
-            unsigned long now = millis();
-            if (now - bnoLastCalibQuery > BNO_CALIB_QUERY_INTERVAL_MS) {
-                bno.saveCalibration();
-                bno.requestCalibrationStatus();
-                bnoLastCalibQuery = now;
-                Serial.println(F("[BNO080] Guardando calibración (DCD) y consultando estado..."));
-            }
-            // La librería actualiza el estado en dataAvailable() -> parseCommandReport      
-            // Usa calibrationComplete() para saber si fue OK
-            if (hasData && bno.calibrationComplete()) {
-                bnoDCDSaved = true;
-                bnoCalibEnabled = false; // mantener dinámica activa internamente, pero cerrar este ciclo
-                Serial.println(F("[BNO080] Calibración almacenada correctamente"));
-            }
-        }
-    };
-    bnoCalibrationStep();
-
-    // Salida de datos como en el ejemplo (silenciada si bnoMute=true)
-    if (bnoAvailable && bno.dataAvailable() == true)
-    {
-        float x = bno.getMagX();
-        float y = bno.getMagY();
-        float z = bno.getMagZ();
-        byte accuracy = bno.getMagAccuracy();
-
-        float quatI = bno.getQuatI();
-        float quatJ = bno.getQuatJ();
-        float quatK = bno.getQuatK();
-        float quatReal = bno.getQuatReal();
-        byte sensorAccuracy = bno.getQuatAccuracy();
-
-        // Actualizar estabilidad y pasos si hay
-        bnoStability = bno.getStabilityClassifier(); // 0..N según librería
-        bnoSteps = bno.getStepCount();
-
-        // Actualizar cache para envío por ESP-NOW
-        lastQuatI = quatI;
-        lastQuatJ = quatJ;
-        lastQuatK = quatK;
-        lastQuatReal = quatReal;
-        lastQuatAccuracy = sensorAccuracy;
-
-        if (!bnoMute) {
-            Serial.print(x, 2);
-            Serial.print(F(","));
-            Serial.print(y, 2);
-            Serial.print(F(","));
-            Serial.print(z, 2);
-            Serial.print(F(","));
-            printAccuracyLevel(accuracy);
-            Serial.print(F(","));
-
-            Serial.print("\t");
-
-            Serial.print(quatI, 2);
-            Serial.print(F(","));
-            Serial.print(quatJ, 2);
-            Serial.print(F(","));
-            Serial.print(quatK, 2);
-            Serial.print(F(","));
-            Serial.print(quatReal, 2);
-            Serial.print(F(","));
-            printAccuracyLevel(sensorAccuracy);
-            Serial.print(F(","));
-
-            Serial.println();
-        }
-    }
+    
 
 
-    // Leer botones (no bloqueante)
+    // Lecturas analógicas
+    readAnalogAxes();
+    // Power button
+    handlePowerButton();
+    // Botones digitales restantes
     readButtons();
+
+    // Detección de pulsación larga EXTENDIDA (10s) del botón OK para entrar a OTA
+    if (!otaModeActive && buttons[BTN_IDX_OK].stable && (millis() - buttons[BTN_IDX_OK].pressStart >= OTA_LONG_PRESS_MS)) {
+        enterOtaMode();
+    }
+
+    // Si estamos en OTA: sólo atender OTA y salir del loop
+    if (otaModeActive) {
+        ArduinoOTA.handle();
+        delay(10);
+        return; // Saltar resto (incluye ESP-NOW)
+    }
 
     // Procesar cambios de modo
     processModeChanges();
@@ -856,36 +844,21 @@ void loop() {
         lastBatteryRead = currentTime;
     }
 
-    // Enviar datos por ESP-NOW a 20Hz
+    // Enviar datos por ESP-NOW a 20Hz (paquete mínimo compatible con CarroClean)
     if (currentTime - lastESPNowSend >= espNowInterval) {
-        // Actualizar datos ESP-NOW
-        espNowData.batteryVoltage_mV = (uint16_t)(current_battery_voltage * 1000.0);
-    espNowData.modo = (uint8_t)currentMode;
-    // No enviar joystick en TILT (forzar 0). En MANUAL se envía el valor calculado.
-    espNowData.joystick = (currentMode == MODE_TILT) ? 0 : joystickValue;
-    espNowData.timestamp = currentTime;
-    // Adjuntar última orientación (quaternion)
-        if (bnoAvailable) {
-            espNowData.quatI = lastQuatI;
-            espNowData.quatJ = lastQuatJ;
-            espNowData.quatK = lastQuatK;
-            espNowData.quatReal = lastQuatReal;
-            espNowData.quatAccuracy = lastQuatAccuracy;
-            espNowData.bnoStability = bnoStability;
-            espNowData.stepCount = bnoSteps;
+        if (!espNowActive) {
+            lastESPNowSend = currentTime; // Evitar overflow lógico
         } else {
-            espNowData.quatI = -1.0f;
-            espNowData.quatJ = -1.0f;
-            espNowData.quatK = -1.0f;
-            espNowData.quatReal = -1.0f;
-            espNowData.quatAccuracy = 0;
-            espNowData.bnoStability = 0;
-            espNowData.stepCount = 0;
-            if (currentMode == MODE_TILT) currentMode = MODE_OFF; // seguridad
-        }
-
+        // Actualizar datos ESP-NOW
+        EspNowComm::toSend.batteryVoltage_mV = (uint16_t)(current_battery_voltage * 1000.0);
+        EspNowComm::toSend.modo = (uint8_t)currentMode;
+        // No enviar joystick en TILT (forzar 0). En MANUAL se envía el valor calculado.
+        EspNowComm::toSend.joystick =  joystickValue;
+        EspNowComm::toSend.timestamp = currentTime;
+        // Nota: Se omiten cuaterniones/IMU en el paquete para mantener compatibilidad con CarroClean
+        
         // Enviar datos con verificación mejorada
-        esp_err_t result = esp_now_send(carroMacAddress, (uint8_t*)&espNowData, sizeof(espNowData));
+        esp_err_t result = esp_now_send(carroMacAddress, (uint8_t*)&EspNowComm::toSend, sizeof(EspNowComm::EspNowData));
 
         // Mostrar resultado detallado
         static int consecutive_errors = 0;
@@ -896,8 +869,8 @@ void loop() {
             if (++success_count % 40 == 0) { // Cada 2 segundos (40 * 50ms)
                 const char* modeNames[] = {"APAGADO", "SEGUIMIENTO", "PAUSA", "MANUAL", "TILT"};
                 const char* modeName = (currentMode <= 4) ? modeNames[currentMode] : "?";    
-                Serial.printf("[ESP-NOW] OK: Batería=%.2fV, Modo=%s, J=%d, Steps=%lu, Stability=%u\n",
-                              current_battery_voltage, modeName, joystickValue, (unsigned long)bnoSteps, bnoStability);
+                Serial.printf("[ESP-NOW] OK: Batería=%.2fV, Modo=%s, J=%d, Envíos:%lu\n",
+                              current_battery_voltage, modeName, joystickValue, (unsigned long)EspNowComm::totalPacketsSent);
             }
         } else {
             consecutive_errors++;
@@ -939,6 +912,7 @@ void loop() {
         }
 
         lastESPNowSend = currentTime;
+        }
     }
 
     // Estadísticas cada 60 segundos
@@ -968,5 +942,14 @@ void loop() {
     }
 
     // Pequeño delay para no saturar el Core 1
+    static unsigned long lastAnalogDebug = 0;
+    unsigned long dbgNow = millis();
+    if (dbgNow - lastAnalogDebug >= 1000) {
+        lastAnalogDebug = dbgNow;
+        Serial.printf("[ANALOG] Y raw=%d V=%.2f n=%.2f | X raw=%d V=%.2f n=%.2f\n",
+                      analogRightRaw, analogRightVolt, analogRightNorm,
+                      analogDownRaw, analogDownVolt, analogDownNorm);
+    }
+
     delay(10);
 }
