@@ -35,6 +35,7 @@ struct MotorCommand {
 };
 
 static void executeMotorCommand(const MotorCommand& cmd); // forward
+static void motorSelfTest();
 
 
 // ========== MOTOR PWM BASE FUNCTIONS ==========
@@ -199,31 +200,81 @@ static void executeMotorCommand(const MotorCommand& cmd) {
         Serial.printf("[MOTOR_CMD] RAW L=%d R=%d\n", left_speed, right_speed);
     }
 
-    const int DEADZONE_PWM = 60; // duty mínimo real (0-255 base -> 0-100 after map)
+    // IMPORTANTE: En la versión original el DEADZONE se interpretaba en porcentaje (0..100)
+    // y se mapeaba directamente a setMotorX que vuelve a mapear a 0..255. Eso implicaba
+    // que TODO valor distinto de cero aplicaba al menos ~60% de 255 (~153 duty), generando
+    // suficiente torque. Aquí restauramos esa semántica porque la versión previa había
+    // reducido el mínimo real a ~23% (insuficiente para arrancar bajo carga).
+    const int DEADZONE_PERCENT = 60; // mínimo en ESCALA 0..100 (no duty directo)
 
     auto toPercent = [&](int v){
         if (v == 0) return 0; // detenido
         int mag = abs(v); // 1..255
-        int duty255 = map(mag, 1, 255, DEADZONE_PWM, 255); // asegura superar fricción
-        if (duty255 < DEADZONE_PWM) duty255 = DEADZONE_PWM;
-        int duty100 = map(duty255, 0, 255, 0, 100);
-        if (duty100 > 100) duty100 = 100;
-        return duty100;
+        int pwmPercent = map(mag, 1, 255, DEADZONE_PERCENT, 100); // mantiene 60..100%
+        if (pwmPercent < DEADZONE_PERCENT) pwmPercent = DEADZONE_PERCENT;
+        return pwmPercent; // 60..100
     };
 
-    int left_pwm = toPercent(left_speed);
-    int right_pwm = toPercent(right_speed);
+    int left_pwm = toPercent(left_speed);   // 0 ó 60..100
+    int right_pwm = toPercent(right_speed); // 0 ó 60..100
     bool left_dir = (left_speed >= 0);
     bool right_dir = (right_speed >= 0);
 
     if (has_movement) {
         Serial.printf("[MOTOR_CMD] CONVERT L_PWM=%d(%s) R_PWM=%d(%s)\n",
                       left_pwm, left_dir?"FWD":"REV", right_pwm, right_dir?"FWD":"REV");
+        // Log duty efectivo (lo que realmente se enviará tras map 0..100 -> 0..255)
+        int dutyL = map(left_pwm, 0, 100, 0, 255);
+        int dutyR = map(right_pwm, 0, 100, 0, 255);
+        Serial.printf("[MOTOR_CMD] EFFECTIVE_DUTY L=%d/255 R=%d/255\n", dutyL, dutyR);
     }
 
     setMotorL(left_pwm, left_dir);
     setMotorR(right_pwm, right_dir);
     motorsEnabled = (left_pwm != 0 || right_pwm != 0);
+}
+
+// ===== Auto-test simple de motores =====
+static void motorSelfTest() {
+    Serial.println("[MOTOR_TEST] Iniciando auto-test breve de motores (modo torque alto)");
+    // Usamos 80% para superar cualquier fricción inicial; luego si funciona bajamos.
+    const int TEST_PWM = 80;   // % (0..100)
+    const int TEST_MS  = 500;  // duración por fase
+    const int PAUSE_MS = 200;  // pausa entre fases
+
+    digitalWrite(ENABLE_MOTORS, HIGH); // Asegurar enable alto durante el test
+    Serial.printf("[MOTOR_TEST] ENABLE=%d TEST_PWM=%d -> duty≈%d/255\n", digitalRead(ENABLE_MOTORS), TEST_PWM, map(TEST_PWM,0,100,0,255));
+
+    // Fase 1: ambos adelante
+    setMotorL(TEST_PWM, true);
+    setMotorR(TEST_PWM, true);
+    delay(TEST_MS);
+    disableMotors(); delay(PAUSE_MS);
+
+    // Fase 2: ambos atrás
+    digitalWrite(ENABLE_MOTORS, HIGH);
+    setMotorL(TEST_PWM, false);
+    setMotorR(TEST_PWM, false);
+    delay(TEST_MS);
+    disableMotors(); delay(PAUSE_MS);
+
+    // Fase 3: giro izquierda (L atrás, R adelante)
+    digitalWrite(ENABLE_MOTORS, HIGH);
+    setMotorL(TEST_PWM, false);
+    setMotorR(TEST_PWM, true);
+    delay(TEST_MS);
+    disableMotors(); delay(PAUSE_MS);
+
+    // Fase 4: giro derecha (L adelante, R atrás)
+    digitalWrite(ENABLE_MOTORS, HIGH);
+    setMotorL(TEST_PWM, true);
+    setMotorR(TEST_PWM, false);
+    delay(TEST_MS);
+    disableMotors();
+
+    motorsEnabled = false;
+    lastCommandTime = millis();
+    Serial.println("[MOTOR_TEST] Auto-test completado (si no hubo movimiento medir tensiones)");
 }
 
 
