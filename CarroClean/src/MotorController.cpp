@@ -26,6 +26,16 @@ static unsigned long lastCommandTime = 0;
 static const unsigned long COMMAND_TIMEOUT = 2000; // 2 segundos
 static bool directControlMode = false; // Nueva variable para modo directo
 
+// ====== Estructura de comando (reducida, sin RPi) ======
+struct MotorCommand {
+    char command_type = 'M';          // 'M' para motor
+    int motor_left_speed = 0;         // -255..255 (signo = dirección)
+    int motor_right_speed = 0;        // -255..255
+    bool emergency_stop = false;      // bandera de emergencia
+};
+
+static void executeMotorCommand(const MotorCommand& cmd); // forward
+
 
 // ========== MOTOR PWM BASE FUNCTIONS ==========
 // Función para desactivar completamente los motores
@@ -150,19 +160,21 @@ void emergencyStop() {
 
 // Función para control directo desde sistema de control
 void motor_enviar_pwm(int izq, int der) {
-    // Ahora acepta -100..100 (signo = dirección). Mantener compatibilidad con llamadas previas (0..100)
+    // Entrada lógica -100..100 -> convertimos a escala -255..255 y delegamos
     lastCommandTime = millis();
-
     izq = constrain(izq, -100, 100);
     der = constrain(der, -100, 100);
+    MotorCommand cmd;
+    cmd.command_type = 'M';
+    cmd.motor_left_speed = (izq * 255) / 100;
+    cmd.motor_right_speed = (der * 255) / 100;
+    cmd.emergency_stop = false;
+    executeMotorCommand(cmd);
+}
 
-    int left_speed = map(abs(izq), 0, 100, 0, 255) * (izq < 0 ? -1 : 1);
-    int right_speed = map(abs(der), 0, 100, 0, 255) * (der < 0 ? -1 : 1);
-    
-    Serial.printf("[MOTOR_VIA_EXECUTE] ControlSigned(%d,%d) -> UART(%d,%d)\n", 
-                  izq, der, left_speed, right_speed);
-
-    
+// Parada explícita accesible desde otros módulos
+void motor_detener() {
+    motor_enviar_pwm(0,0);
 }
 
 
@@ -170,6 +182,48 @@ void motor_enviar_pwm(int izq, int der) {
 void setupMotorControlDirect() {
     directControlMode = true;
     Serial.println("[MotorController] Modo directo activado");
+}
+
+// ===== Implementación de executeMotorCommand (sin RPi) =====
+static void executeMotorCommand(const MotorCommand& cmd) {
+    if (cmd.emergency_stop) {
+        emergencyStop();
+        return;
+    }
+
+    int left_speed = constrain(cmd.motor_left_speed, -255, 255);
+    int right_speed = constrain(cmd.motor_right_speed, -255, 255);
+
+    bool has_movement = (left_speed != 0 || right_speed != 0);
+    if (has_movement) {
+        Serial.printf("[MOTOR_CMD] RAW L=%d R=%d\n", left_speed, right_speed);
+    }
+
+    const int DEADZONE_PWM = 60; // duty mínimo real (0-255 base -> 0-100 after map)
+
+    auto toPercent = [&](int v){
+        if (v == 0) return 0; // detenido
+        int mag = abs(v); // 1..255
+        int duty255 = map(mag, 1, 255, DEADZONE_PWM, 255); // asegura superar fricción
+        if (duty255 < DEADZONE_PWM) duty255 = DEADZONE_PWM;
+        int duty100 = map(duty255, 0, 255, 0, 100);
+        if (duty100 > 100) duty100 = 100;
+        return duty100;
+    };
+
+    int left_pwm = toPercent(left_speed);
+    int right_pwm = toPercent(right_speed);
+    bool left_dir = (left_speed >= 0);
+    bool right_dir = (right_speed >= 0);
+
+    if (has_movement) {
+        Serial.printf("[MOTOR_CMD] CONVERT L_PWM=%d(%s) R_PWM=%d(%s)\n",
+                      left_pwm, left_dir?"FWD":"REV", right_pwm, right_dir?"FWD":"REV");
+    }
+
+    setMotorL(left_pwm, left_dir);
+    setMotorR(right_pwm, right_dir);
+    motorsEnabled = (left_pwm != 0 || right_pwm != 0);
 }
 
 

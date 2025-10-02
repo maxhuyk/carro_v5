@@ -34,75 +34,9 @@ static float saved_normal_Q = KALMAN_Q; // Para restaurar Q tras recuperación
 static unsigned long control_execution_count = 0;
 static unsigned long last_frequency_check = 0;
 
-uint8_t modo = 0;
-uint8_t joystick = 0;
-
-// Función para procesar control por joystick (MODO 3)
-void processJoystickControl(uint8_t joystick_value) {
-    const int velocidad_manual = VELOCIDAD_MANUAL; // Usar valor del config.h
-    
-    int vel_izq = 0;
-    int vel_der = 0;
-    
-    // Mapeo basado en el control.py de la Raspberry (valores 0-7)
-    switch (joystick_value) {
-        case 0: // (0000) - Sin movimiento
-            vel_izq = 0;
-            vel_der = 0;
-            break;
-            
-        case 1: // (0100) - Solo adelante
-            vel_izq = velocidad_manual;
-            vel_der = velocidad_manual;
-            break;
-            
-        case 2: // (0110) - Adelante + Izquierda (INVERTIDO -> Adelante + Derecha físico)
-            // Invertimos porque se detectó que los giros estaban al revés en hardware
-            vel_izq = velocidad_manual;        // Rueda izquierda más rápida (para girar a la derecha física)
-            vel_der = velocidad_manual / 2;    // Rueda derecha más lenta
-            break;
-            
-        case 3: // (0010) - Solo izquierda (INVERTIDO -> giro derecha físico en el lugar)
-            vel_izq =  velocidad_manual / 2;   // adelante
-            vel_der = -velocidad_manual / 2;   // atrás
-            break;
-            
-        case 4: // (0011) - Izquierda + Atrás (INVERTIDO -> Atrás + Derecha físico)
-            vel_izq = -velocidad_manual;       // reversa rápida
-            vel_der = -velocidad_manual / 2;   // reversa lenta
-            break;
-            
-        case 5: // (0001) - Solo atrás
-            vel_izq = -velocidad_manual;
-            vel_der = -velocidad_manual;
-            break;
-            
-        case 6: // (1001) - Derecha + Atrás (INVERTIDO -> Atrás + Izquierda físico)
-            vel_izq = -velocidad_manual / 2;  // reversa lenta
-            vel_der = -velocidad_manual;      // reversa rápida
-            break;
-            
-        case 7: // (1000) - Solo derecha (INVERTIDO -> giro izquierda físico en el lugar)
-            vel_izq = -velocidad_manual / 2;  // atrás
-            vel_der =  velocidad_manual / 2;  // adelante
-            break;
-
-        case 8: // (1100) - Adelante + Derecha (nuevo) (INVERTIDO -> Adelante + Izquierda físico)
-            vel_izq = velocidad_manual / 2;   // Rueda izquierda más lenta
-            vel_der = velocidad_manual;       // Rueda derecha más rápida
-            break;
-            
-        default:
-            Serial.printf("[JOYSTICK] Valor inválido: %d, deteniendo motores\n", joystick_value);
-            vel_izq = 0;
-            vel_der = 0;
-            break;
-    }
-    
-    // Enviar directamente (ahora motor_enviar_pwm soporta signo)
-    Serial.printf("[JOYSTICK] Joy=%d -> L=%d, R=%d\n", joystick_value, vel_izq, vel_der);
-    motor_enviar_pwm(vel_izq, vel_der);
-}
+uint8_t modo = 0;            // modo actual del TAG
+static int manual_vel_L = 0; // velocidad manual izquierda (-/+)
+static int manual_vel_R = 0; // velocidad manual derecha (-/+)
 
 // Función de inicialización del sistema de control
 void control_init() {
@@ -133,7 +67,6 @@ void control_init() {
 
 // Procesa UNA iteración del control - debe ser llamada desde loop() del main.cpp
 void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener) {
-    
     // Contar ejecuciones para debug de frecuencia
     control_execution_count++;
     unsigned long current_time = millis();
@@ -153,11 +86,10 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
     // PASO 0: Verificar MODO del TAG - CONTROL BASADO EN MODO
     // ###########################################################
     if (data != nullptr && data->data_valid) {
-        
-        modo = (uint8_t)data->control_data[1]; // MODO está en control_data[1]
-        joystick = (uint8_t)data->buttons_data[0]; // JOYSTICK está en buttons_data[0]
-
-        
+        modo = (uint8_t)data->control_data[1];
+        manual_vel_L = (int)data->buttons_data[2];
+        manual_vel_R = (int)data->buttons_data[3];
+        Serial.printf("[MODO] Modo actual del TAG: %d\n", modo);
     }
         
         // ###########################################################
@@ -222,7 +154,10 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                             if (modo == 1) {
                                 enviar_pwm(vel_izq, vel_der);
                             } else if (modo == 3) {
-                                processJoystickControl(joystick);
+                                int vL = constrain(manual_vel_L, -VELOCIDAD_MANUAL, VELOCIDAD_MANUAL);
+                                int vR = constrain(manual_vel_R, -VELOCIDAD_MANUAL, VELOCIDAD_MANUAL);
+                                Serial.printf("[MANUAL] (emergencia) L=%d R=%d\n", vL, vR);
+                                enviar_pwm(vL, vR);
                             } else {
                                 detener();
                             }
@@ -457,8 +392,10 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                 if (modo == 1) {
                     enviar_pwm(vel_izq, vel_der);
                 } else if (modo == 3) {
-                    // Ignoramos resultado autónomo y usamos joystick
-                    processJoystickControl(joystick);
+                    int vL = constrain(manual_vel_L, -VELOCIDAD_MANUAL, VELOCIDAD_MANUAL);
+                    int vR = constrain(manual_vel_R, -VELOCIDAD_MANUAL, VELOCIDAD_MANUAL);
+                    Serial.printf("[MANUAL] L=%d R=%d (override auto)\n", vL, vR);
+                    enviar_pwm(vL, vR);
                 } else {
                     detener();
                 }
@@ -468,8 +405,10 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                 last_valid_velocity = velocidad_avance;
             } else {
                 if (modo == 3) {
-                    // Aunque la velocidad automática sea 0, en modo joystick obedecemos al usuario
-                    processJoystickControl(joystick);
+                    int vL = constrain(manual_vel_L, -VELOCIDAD_MANUAL, VELOCIDAD_MANUAL);
+                    int vR = constrain(manual_vel_R, -VELOCIDAD_MANUAL, VELOCIDAD_MANUAL);
+                    Serial.printf("[MANUAL] (idle) L=%d R=%d\n", vL, vR);
+                    enviar_pwm(vL, vR);
                 } else {
                     detener();
                 }
@@ -517,11 +456,12 @@ void control_main(CarroData* data, PWMCallback enviar_pwm, StopCallback detener)
                         vel_der = velocidades_result.vel_der;
                        if (modo == 1) {
                             enviar_pwm(vel_izq, vel_der);
-                        }
-                        else if(modo == 3) {
-                            processJoystickControl(joystick);
-                        }
-                        else {
+                        } else if(modo == 3) {
+                            int vL = constrain(manual_vel_L, -VELOCIDAD_MANUAL, VELOCIDAD_MANUAL);
+                            int vR = constrain(manual_vel_R, -VELOCIDAD_MANUAL, VELOCIDAD_MANUAL);
+                            Serial.printf("[MANUAL] (lost continue) L=%d R=%d\n", vL, vR);
+                            enviar_pwm(vL, vR);
+                        } else {
                             detener();
                         }
                     } else {

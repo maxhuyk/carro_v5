@@ -12,18 +12,22 @@
 
 // Namespace para encapsular estado de comunicación ESP-NOW
 namespace EspNowComm {
+    // Versión 2: ejes analógicos crudos (ax_raw, ay_raw) reemplazan joystick discreto
     typedef struct {
-        uint8_t version = 1;
-        uint16_t batteryVoltage_mV;
-        uint8_t modo;
-        uint8_t joystick;
-        uint32_t timestamp;
+        uint8_t  version = 2;         // debe ser 2
+        uint16_t batteryVoltage_mV;   // mV batería
+        uint8_t  modo;                // modo 0..4
+        uint16_t ax_raw;              // eje X crudo 0..4095
+        uint16_t ay_raw;              // eje Y crudo 0..4095
+        uint32_t timestamp;           // millis() del TAG
     } __attribute__((packed)) EspNowData;
 
     volatile EspNowData receivedData = {};
     volatile bool newDataReceived = false;
     volatile unsigned long lastDataReceived = 0;
     volatile unsigned long totalPacketsReceived = 0;
+    volatile int16_t manualVelL = 0; // velocidad proporcional izquierda (-VELOCIDAD_MAXIMA..VELOCIDAD_MAXIMA)
+    volatile int16_t manualVelR = 0; // velocidad proporcional derecha
 }
 
 
@@ -39,20 +43,80 @@ void motorControlCallback(float velocidad_izq, float velocidad_der);
 
 // Callback para recepción de datos ESP-NOW
 void onDataReceived(const uint8_t * mac, const uint8_t *incomingData, int len) {
-    if (len == sizeof(EspNowComm::EspNowData)) {
-        memcpy((void*)&EspNowComm::receivedData, incomingData, sizeof(EspNowComm::EspNowData));
-        EspNowComm::newDataReceived = true;
-        EspNowComm::lastDataReceived = millis();
-        EspNowComm::totalPacketsReceived++;
+    if (len != sizeof(EspNowComm::EspNowData)) {
+        Serial.printf("[ESP-NOW] Tamaño de datos incorrecto: %d (esperado %d)\n", len, sizeof(EspNowComm::EspNowData));
+        return;
+    }
+    memcpy((void*)&EspNowComm::receivedData, incomingData, sizeof(EspNowComm::EspNowData));
+    // Validar versión
+    if (EspNowComm::receivedData.version != 2) {
+        Serial.printf("[ESP-NOW] Versión desconocida: %u (se esperaba 2)\n", EspNowComm::receivedData.version);
+        return;
+    }
+    EspNowComm::newDataReceived = true;
+    EspNowComm::lastDataReceived = millis();
+    EspNowComm::totalPacketsReceived++;
 
-        // Solo mostrar cada 40 paquetes para no saturar consola (cada 2 segundos)
-        if (EspNowComm::totalPacketsReceived % 40 == 0) {
-            float voltage = EspNowComm::receivedData.batteryVoltage_mV / 1000.0;
-            Serial.printf("[ESP-NOW] Recibido #%lu: Batería=%.2fV, Modo=%d, Joy=%d, qAcc=%d, Stab=%u, Steps=%lu\n",
-                          EspNowComm::totalPacketsReceived, voltage, EspNowComm::receivedData.modo, EspNowComm::receivedData.joystick);
+    // Mapear ejes crudos (600..3400) a rango proporcional -100..100 (luego a VELOCIDAD_MANUAL o VELOCIDAD_MAXIMA si prefieres)
+    constexpr int RAW_MIN = 600;   // extremo negativo
+    constexpr int RAW_MAX = 3400;  // extremo positivo
+    constexpr int RAW_CENTER = 2000; // centro físico
+    constexpr int RAW_DEAD = 200;  // +/- ventana muerta
+
+    auto mapAxis = [](int raw){
+        if (raw < RAW_CENTER - RAW_DEAD) {
+            float norm = (float)(raw - (RAW_CENTER - RAW_DEAD)) / (float)(RAW_MIN - (RAW_CENTER - RAW_DEAD));
+            if (norm < 0) norm = 0; if (norm > 1) norm = 1; // norm en [0,1]
+            return -norm; // negativo
+        } else if (raw > RAW_CENTER + RAW_DEAD) {
+            float norm = (float)(raw - (RAW_CENTER + RAW_DEAD)) / (float)(RAW_MAX - (RAW_CENTER + RAW_DEAD));
+            if (norm < 0) norm = 0; if (norm > 1) norm = 1;
+            return norm; // positivo
+        } else {
+            return 0.0f; // dentro de deadzone
         }
-    } else {
-        Serial.printf("[ESP-NOW] Tamaño de datos incorrecto: %d bytes (esperado %d)\n", len, sizeof(EspNowComm::EspNowData));
+    };
+
+    float xNorm = mapAxis(EspNowComm::receivedData.ax_raw); // -1 izquierda, +1 derecha (ajustar signo si invertido)
+    float yNorm = mapAxis(EspNowComm::receivedData.ay_raw); // -1 atrás, +1 adelante (ajustar signo si invertido)
+
+    // Ajustar signos si tu hardware mapea al revés:
+    // xNorm = -xNorm; // descomentar si invertido
+    // yNorm = -yNorm; // descomentar si invertido
+
+    // Convertir a velocidades diferenciales proporcionales.
+    // yNorm controla avance/retro, xNorm controla giro (resta a izquierda, suma a derecha)
+    const float maxManual = (float)VELOCIDAD_MANUAL; // puedes usar VELOCIDAD_MAXIMA si querés todo el rango
+    float vBase = yNorm * maxManual; // avance (-max..max)
+    float vTurn = xNorm * maxManual; // giro (-max..max)
+
+    float vL = vBase - vTurn; // diferencial izquierda
+    float vR = vBase + vTurn; // diferencial derecha
+
+    // Limitar a rango permitido -VELOCIDAD_MAXIMA..VELOCIDAD_MAXIMA
+    auto clampf = [](float v, float mn, float mx){ return v < mn ? mn : (v > mx ? mx : v); };
+    vL = clampf(vL, -VELOCIDAD_MAXIMA, VELOCIDAD_MAXIMA);
+    vR = clampf(vR, -VELOCIDAD_MAXIMA, VELOCIDAD_MAXIMA);
+
+    EspNowComm::manualVelL = (int16_t)lroundf(vL);
+    EspNowComm::manualVelR = (int16_t)lroundf(vR);
+
+    if (EspNowComm::totalPacketsReceived % 40 == 0) {
+        float voltage = EspNowComm::receivedData.batteryVoltage_mV / 1000.0;
+        Serial.printf("[ESP-NOW] Recibido #%lu: V=%.2fV Modo=%u ax=%u ay=%u -> xN=%.2f yN=%.2f vL=%d vR=%d\n",
+                      EspNowComm::totalPacketsReceived, voltage, EspNowComm::receivedData.modo,
+                      (unsigned)EspNowComm::receivedData.ax_raw,
+                      (unsigned)EspNowComm::receivedData.ay_raw,
+                      xNorm, yNorm, (int)EspNowComm::manualVelL, (int)EspNowComm::manualVelR);
+    }
+
+    if (EspNowComm::totalPacketsReceived % 40 == 0) {
+        float voltage = EspNowComm::receivedData.batteryVoltage_mV / 1000.0;
+        Serial.printf("[ESP-NOW] Recibido #%lu: V=%.2fV Modo=%u ax=%u ay=%u vL=%d vR=%d\n",
+                      EspNowComm::totalPacketsReceived, voltage, EspNowComm::receivedData.modo,
+                      (unsigned)EspNowComm::receivedData.ax_raw,
+                      (unsigned)EspNowComm::receivedData.ay_raw,
+                      (int)EspNowComm::manualVelL, (int)EspNowComm::manualVelR);
     }
 }
 
@@ -107,11 +171,11 @@ void updateSharedDataAndRunControl(float distances[NUM_ANCHORS], bool anchor_sta
             sharedCarroData.control_data[0] = EspNowComm::receivedData.batteryVoltage_mV / 1000.0; // BAT_TAG
             sharedCarroData.control_data[1] = EspNowComm::receivedData.modo; // MODO
 
-            // Llenar datos de botones: [JOY_D, JOY_A, JOY_I, JOY_T]
-            sharedCarroData.buttons_data[0] = EspNowComm::receivedData.joystick; // JOY_D (dirección)
-            sharedCarroData.buttons_data[1] = 0.0; // JOY_A (no disponible)
-            sharedCarroData.buttons_data[2] = 0.0; // JOY_I (no disponible)
-            sharedCarroData.buttons_data[3] = 0.0; // JOY_T (no disponible)
+            // Guardar valores crudos y normalizados para el control manual proporcional
+            sharedCarroData.buttons_data[0] = EspNowComm::receivedData.ax_raw; // ax_raw
+            sharedCarroData.buttons_data[1] = EspNowComm::receivedData.ay_raw; // ay_raw
+            sharedCarroData.buttons_data[2] = EspNowComm::manualVelL;         // velocidad izquierda propuesta
+            sharedCarroData.buttons_data[3] = EspNowComm::manualVelR;         // velocidad derecha propuesta
             
             sharedCarroData.data_valid = true;
         } else {
@@ -257,7 +321,8 @@ void loop() {
         // Aquí puedes procesar los datos recibidos del TAG
         float tagBatteryVoltage = EspNowComm::receivedData.batteryVoltage_mV / 1000.0;
         uint8_t tagModo = EspNowComm::receivedData.modo;
-        uint8_t tagJoystick = EspNowComm::receivedData.joystick;
+    int16_t manualVL = EspNowComm::manualVelL;
+    int16_t manualVR = EspNowComm::manualVelR;
 
         // Ejemplo: usar los datos recibidos para control del motor o envío a RPi
         // processTagCommand(tagModo, tagJoystick);
@@ -294,7 +359,8 @@ void loop() {
       bool tagDataValid = (millis() - EspNowComm::lastDataReceived) < 1000;
       float tagBatteryVoltage = tagDataValid ? (EspNowComm::receivedData.batteryVoltage_mV / 1000.0) : 0.0;
       uint8_t tagModo = tagDataValid ? EspNowComm::receivedData.modo : 0;
-      uint8_t tagJoystick = tagDataValid ? EspNowComm::receivedData.joystick : 0;
+    int16_t manualVL = tagDataValid ? EspNowComm::manualVelL : 0;
+    int16_t manualVR = tagDataValid ? EspNowComm::manualVelR : 0;
 
 
       lastMeasurementCount = currentCount;
@@ -302,9 +368,9 @@ void loop() {
       // Mostrar información ocasionalmente (cada ~2 segundos a frecuencia UWB)
       static int send_count = 0;
       if (++send_count % 20 == 0) { // Ajustado para frecuencia real del UWB
-          Serial.printf("[UWB+CONTROL] UWB[%.1f,%.1f,%.1f] TAG[%.2fV,%d] Valid:%s Control:SYNC\n", 
+          Serial.printf("[UWB+CONTROL] UWB[%.1f,%.1f,%.1f] TAG[%.2fV,%d] Manual[L=%d R=%d] Valid:%s Control:SYNC\n", 
                         distances[0], distances[1], distances[2],
-                        tagBatteryVoltage, tagModo, tagJoystick, 
+                        tagBatteryVoltage, tagModo, manualVL, manualVR,
                         tagDataValid ? "SI" : "NO");
       }
   }

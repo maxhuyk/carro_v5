@@ -7,16 +7,36 @@
 #include <ArduinoOTA.h>
 #include <esp_sleep.h>
 
-// (Escaneo I2C removido para versión simplificada del TAG)
+// ================== Mapeo hardware actualizado ==================
+// Joystick X: GPIO39 (ADC1, input only)
+// Joystick Y: GPIO35 (ADC1, input only)
+// LED estado: GPIO14
+// Botón modo (OK): GPIO26
+// Botón encendido (power hold / long press): GPIO5
+// Latch flip-flop alimentación: GPIO25 (OUTPUT HIGH)
 
-// Configuración de botones
-#define BTN_RIGHT  35       //ahora es joystick y
-#define BTN_LEFT   39       //ahora es encendido
-#define BTN_UP     14       //ahora es
-#define BTN_DOWN   25       //ahora es joystick x 
-#define BTN_OK     26       
+#define PIN_JOY_X    39
+#define PIN_JOY_Y    35
+#define PIN_LED      14
+#define PIN_BTN_MODE 26
+#define PIN_BTN_PWR  5
+#define PIN_LATCH    25
 
-// Configuración del divisor de voltaje de la batería LiPo
+// Mantener compatibilidad con índices previos (RIGHT=Y, DOWN=X)
+#define BTN_RIGHT PIN_JOY_Y
+#define BTN_DOWN  PIN_JOY_X
+#define BTN_OK    PIN_BTN_MODE
+#define BTN_UP    PIN_BTN_PWR   // ya no usado para modo, sólo para power
+#define BTN_LEFT  PIN_LATCH     // latch
+
+// Índices de botones (orden: RIGHT, LEFT, UP, DOWN, OK)
+#define BTN_IDX_RIGHT 0
+#define BTN_IDX_LEFT  1
+#define BTN_IDX_UP    2
+#define BTN_IDX_DOWN  3
+#define BTN_IDX_OK    4
+
+// ================== Config batería ==================
 #define BATTERY_PIN 36
 #define R1 10000.0
 #define R2 33000.0
@@ -25,66 +45,62 @@
 #define ADC_REFERENCE_VOLTAGE 3.3
 #define BATTERY_SAMPLES 10
 
-// ESP-NOW Configuration
-// MAC Address del Carro (reemplazar con la MAC real del Carro)
-uint8_t carroMacAddress[] = {0x68, 0x25, 0xDD, 0x20, 0x14, 0x18}; // Placeholder - cambiar por MAC real
-// mac del otro esp32  68:25:DD:20:14:18
-//0x00, 0x4B, 0x12, 0x32, 0x8E, 0xFC
-// Namespace para encapsular estado de comunicación ESP-NOW (alineado con CarroClean)
+// ================== Estado analógico ==================
+static int analogRightRaw = 0; // Y
+static int analogDownRaw  = 0; // X
+static float analogRightVolt = 0.0f;
+static float analogDownVolt  = 0.0f;
+static unsigned long lastAnalogSampleMs = 0;
+static const unsigned long ANALOG_SAMPLE_INTERVAL_MS = 25; // ~40 Hz
+static float analogRightNorm = 0.0f;
+static float analogDownNorm  = 0.0f;
+
+// MAC Address del Carro (ajustar a la real)
+static uint8_t carroMacAddress[] = {0x68, 0x25, 0xDD, 0x20, 0x14, 0x18};
+
+// ================== Namespace ESP-NOW ==================
 namespace EspNowComm {
     typedef struct {
-        uint8_t  version = 1;       // Versión del protocolo
-        uint16_t batteryVoltage_mV; // Voltaje en milivoltios (0-65535 mV)
-        uint8_t  modo;              // Modo (0..4 usado)
-        uint8_t  joystick;          // Joystick (0..7)
-        uint32_t timestamp;         // Marca de tiempo
+        uint8_t  version = 2;
+        uint16_t batteryVoltage_mV;
+        uint8_t  modo;
+        uint16_t ax_raw;
+        uint16_t ay_raw;
+        uint32_t timestamp;
     } __attribute__((packed)) EspNowData;
 
-    volatile EspNowData toSend = {};           // Buffer de envío
-    volatile bool sendPending = false;         // Marcador opcional
-    volatile unsigned long lastSendMs = 0;     // Último envío
-    volatile unsigned long totalPacketsSent = 0; // Contador de envíos
+    volatile EspNowData toSend = {};
+    volatile unsigned long lastSendMs = 0;
+    volatile unsigned long totalPacketsSent = 0;
 }
 
-// Sistema de modos
+// ================== Modos de sistema ==================
 enum SystemMode {
-    MODE_OFF = 0,       // Apagado
-    MODE_TRACKING = 1,  // Seguimiento
-    MODE_PAUSE = 2,     // Pausa
-    MODE_MANUAL = 3,    // Manual
+    MODE_OFF = 0,
+    MODE_TRACKING = 1,
+    MODE_PAUSE = 2,
+    MODE_MANUAL = 3,
 };
-
-// Variables del sistema de modos
 volatile SystemMode currentMode = MODE_OFF;
-volatile uint8_t joystickValue = 0;
+volatile uint8_t joystickValue = 0; // legacy (se mantiene para compatibilidad logs)
 
-// Protección de cambios de modo
+// Protección de cambio de modo
 static unsigned long lastModeChangeTime = 0;
-static const unsigned long MODE_CHANGE_GUARD_MS = 300; // Ignorar eventos por 300ms tras cambiar de modo
+static const unsigned long MODE_CHANGE_GUARD_MS = 300;
 
-// Estructura para manejo de botones
+// ================== Estado botones ==================
 struct ButtonState {
-    // Lectura y estado estable (con debounce)
     bool raw = false;
     bool stable = false;
     bool previousStable = false;
     unsigned long lastChange = 0;
-
-    // Edges
     bool rising = false;
     bool falling = false;
-
-    // Long press (one-shot por pulsación)
     unsigned long pressStart = 0;
     bool longPressFired = false;
 };
 
-ButtonState buttons[5]; // RIGHT, LEFT, UP, DOWN, OK
-#define BTN_IDX_RIGHT 0
-#define BTN_IDX_LEFT  1
-#define BTN_IDX_UP    2
-#define BTN_IDX_DOWN  3
-#define BTN_IDX_OK    4
+// (ButtonState y BTN_IDX_* ya definidos arriba)
 
 const unsigned long LONG_PRESS_TIME = 1500; // 1.5s mejora reconocimiento
 const unsigned long DEBOUNCE_TIME   = 40;   // 40ms debounce (modo)
@@ -93,17 +109,7 @@ const unsigned long OTA_LONG_PRESS_MS = 10000;
 // Apagado (mantener >3s)
 const unsigned long POWER_LONG_PRESS_MS = 3000; // 3s para apagar
 
-// Lecturas analógicas de los ejes reasignados
-static int analogRightRaw = 0; // BTN_RIGHT (Y)
-static int analogDownRaw  = 0; // BTN_DOWN  (X)
-static float analogRightVolt = 0.0f;
-static float analogDownVolt  = 0.0f;
-static unsigned long lastAnalogSampleMs = 0;
-static const unsigned long ANALOG_SAMPLE_INTERVAL_MS = 25; // ~40 Hz
-
-// Normalización 0..1
-static float analogRightNorm = 0.0f;
-static float analogDownNorm  = 0.0f;
+// (Definiciones analógicas ya declaradas arriba; se elimina duplicado)
 
 // Estado del botón de encendido (BTN_LEFT) para detección de long press sin interferir con latch
 static bool powerPressing = false;
@@ -190,6 +196,24 @@ bool initESPNOW() {
                   carroMacAddress[3], carroMacAddress[4], carroMacAddress[5]);
     return true;
 }
+
+// ============== Definiciones de botones (reinsertadas) ==============
+struct ButtonState {
+    bool raw = false;
+    bool stable = false;
+    bool previousStable = false;
+    unsigned long lastChange = 0;
+    bool rising = false;
+    bool falling = false;
+    unsigned long pressStart = 0;
+    bool longPressFired = false;
+};
+ButtonState buttons[5];
+#define BTN_IDX_RIGHT 0
+#define BTN_IDX_LEFT  1
+#define BTN_IDX_UP    2
+#define BTN_IDX_DOWN  3
+#define BTN_IDX_OK    4
 
 // Función para leer estado de botones (no bloqueante)
 void readButtons() {
@@ -695,10 +719,11 @@ void setup() {
 
     // Inicializar datos ESP-NOW
     // Inicializar estructura de envío (evitar asignación a volatile)
-    EspNowComm::toSend.version = 1;
+    EspNowComm::toSend.version = 2; // aseguramos versión correcta
     EspNowComm::toSend.batteryVoltage_mV = 0;
     EspNowComm::toSend.modo = 0;      // Modo inicial (apagado)
-    EspNowComm::toSend.joystick = 0;  // Joystick inicial
+    EspNowComm::toSend.ax_raw = 0;    // Eje X crudo
+    EspNowComm::toSend.ay_raw = 0;    // Eje Y crudo
     EspNowComm::toSend.timestamp = 0;
 
     Serial.println("[TAG] Sistema iniciado en MODO APAGADO");
@@ -850,11 +875,12 @@ void loop() {
             lastESPNowSend = currentTime; // Evitar overflow lógico
         } else {
         // Actualizar datos ESP-NOW
-        EspNowComm::toSend.batteryVoltage_mV = (uint16_t)(current_battery_voltage * 1000.0);
-        EspNowComm::toSend.modo = (uint8_t)currentMode;
-        // No enviar joystick en TILT (forzar 0). En MANUAL se envía el valor calculado.
-        EspNowComm::toSend.joystick =  joystickValue;
-        EspNowComm::toSend.timestamp = currentTime;
+    EspNowComm::toSend.batteryVoltage_mV = (uint16_t)(current_battery_voltage * 1000.0);
+    EspNowComm::toSend.modo = (uint8_t)currentMode;
+    // Enviar ejes analógicos crudos (sin procesamiento). RIGHT = Y, DOWN = X.
+    EspNowComm::toSend.ax_raw = (uint16_t)analogDownRaw;   // X
+    EspNowComm::toSend.ay_raw = (uint16_t)analogRightRaw;  // Y
+    EspNowComm::toSend.timestamp = currentTime;
         // Nota: Se omiten cuaterniones/IMU en el paquete para mantener compatibilidad con CarroClean
         
         // Enviar datos con verificación mejorada
@@ -869,8 +895,11 @@ void loop() {
             if (++success_count % 40 == 0) { // Cada 2 segundos (40 * 50ms)
                 const char* modeNames[] = {"APAGADO", "SEGUIMIENTO", "PAUSA", "MANUAL", "TILT"};
                 const char* modeName = (currentMode <= 4) ? modeNames[currentMode] : "?";    
-                Serial.printf("[ESP-NOW] OK: Batería=%.2fV, Modo=%s, J=%d, Envíos:%lu\n",
-                              current_battery_voltage, modeName, joystickValue, (unsigned long)EspNowComm::totalPacketsSent);
+                Serial.printf("[ESP-NOW] OK: V=%.2fV Modo=%s ax=%u ay=%u Envíos:%lu\n",
+                              current_battery_voltage, modeName,
+                              (unsigned)EspNowComm::toSend.ax_raw,
+                              (unsigned)EspNowComm::toSend.ay_raw,
+                              (unsigned long)EspNowComm::totalPacketsSent);
             }
         } else {
             consecutive_errors++;
