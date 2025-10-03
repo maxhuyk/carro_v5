@@ -81,10 +81,7 @@ void FollowController::actualizar() {
     float pos_tag[3] = {0,0,0};
     bool dist_validas = (dist_kal[0]>0 && dist_kal[1]>0 && dist_kal[2]>0);
     if (dist_validas) {
-        // Requiere posiciones de sensores - en esta fase se puede inyectar luego
-        // Aquí asumimos un triángulo aproximado similar al original
-        static const float SENSOR_POS[3][3] = { {280.0f,0,0}, {-280.0f,0,0}, {-165.0f,-270.0f,0} };
-        utils::trilateracion_3d(SENSOR_POS, dist_kal, pos_tag);
+        utils::trilateracion_3d(cfg_.anchor_pos, dist_kal, pos_tag);
     }
 
     // Ángulo con desenrollado y limitador
@@ -94,7 +91,15 @@ void FollowController::actualizar() {
     angulo_prev_ = angulo_rel;
 
     // Distancia promedio frontal (usamos distancias filtradas para control de distancia)
-    float distancia = (dist_kal[0] + dist_kal[1]) / 2.0f;
+    float d_front0 = dist_kal[0];
+    float d_front1 = dist_kal[1];
+    // Filtro de asimetría: si una distancia se desvía demasiado de la otra, usar la menor (heurística CarroClean típica)
+    float diff_front = fabsf(d_front0 - d_front1);
+    const float ASIM_MAX = 800.0f; // mm tolerado (ajustable si difiere en original)
+    if (diff_front > ASIM_MAX) {
+        if (d_front0 < d_front1) d_front1 = d_front0; else d_front0 = d_front1;
+    }
+    float distancia = (d_front0 + d_front1) * 0.5f;
 
     // ====================== SEGURIDAD / SIGNAL LOST ======================
     bool early_return = false;
@@ -195,6 +200,10 @@ void FollowController::manejarSignalLost(float* distancias_filtradas, float dist
             kalman_.setQ(cfg_.recovery_Q_temp);
             kalman_.forceState(distancias_filtradas, cfg_.recovery_P_init);
             LOG_INFO("RECOVERY", "Iniciada Q=%.3f->%.3f P=%.1f", saved_normal_Q_, cfg_.recovery_Q_temp, cfg_.recovery_P_init);
+            // Reset integrales para evitar sobrecorrecciones tras pérdida
+            pid_ang_.integral = 0; pid_ang_.prev_error = 0; pid_ang_.first = true;
+            pid_dist_.integral = 0; pid_dist_.prev_error = 0; pid_dist_.first = true;
+            velocidad_actual_ = 0;
         }
         if (in_recovery_) {
             recovery_cycles_++;

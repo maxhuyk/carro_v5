@@ -51,6 +51,10 @@ struct ControlTuning {
     float timeout_fallback_s = 1.0f;
     float aceleracion_max = 10.0f;
     float desaceleracion_max = 35.0f;
+
+    // Posiciones de anchors (mm) usadas en trilateración (migradas desde CarroClean)
+    // A1 (derecha), A2 (izquierda), A3 (trasera) ejemplo layout triángulo
+    float anchor_pos[3][3] = { {280.0f, 0.0f, 0.0f}, {-280.0f, 0.0f, 0.0f}, {-165.0f, -270.0f, 0.0f} };
 };
 
 ControlTuning obtenerControlTuningDefault();

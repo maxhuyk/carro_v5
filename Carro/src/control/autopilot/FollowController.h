@@ -31,7 +31,15 @@ public:
     void pushMeasurement(const Measurement& m);
 
     // Set modo y velocidades manuales (para gating modo 1/3 similar a CarroClean)
-    void setModo(uint8_t modo) { modo_ = modo; }
+    void setModo(uint8_t modo) {
+        if (modo_ != modo) {
+            // Reset de estados críticos al cambiar de modo
+            pid_ang_.integral = 0; pid_ang_.prev_error = 0; pid_ang_.first = true;
+            pid_dist_.integral = 0; pid_dist_.prev_error = 0; pid_dist_.first = true;
+            velocidad_actual_ = 0;
+        }
+        modo_ = modo;
+    }
     void setManual(int vL, int vR) { manual_L_ = vL; manual_R_ = vR; }
 
 private:
