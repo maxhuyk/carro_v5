@@ -6,12 +6,14 @@ namespace control {
 bool FollowController::iniciar() {
     pid_init(pid_ang_, cfg_.pid_ang_kp, cfg_.pid_ang_ki, cfg_.pid_ang_kd, 0.0f, cfg_.pid_ang_alpha, cfg_.pid_ang_salida_max, cfg_.pid_ang_integral_max);
     pid_init(pid_dist_, cfg_.pid_dist_kp, cfg_.pid_dist_ki, cfg_.pid_dist_kd, cfg_.distancia_objetivo, cfg_.pid_dist_alpha, cfg_.velocidad_maxima, cfg_.pid_dist_integral_max);
+    media_.init(3, cfg_.media_movil_ventana);
+    kalman_.init(3, cfg_.kalman_Q, cfg_.kalman_R);
     LOG_INFO("AUTO", "FollowController iniciado");
     return true;
 }
 
 void FollowController::pushMeasurement(const Measurement& m) {
-    last_ = m; has_measurement_ = true; }
+    last_ = m; has_measurement_ = true; last_measurement_wall_ms_ = millis(); }
 
 float FollowController::limitar_cambio(float anterior, float nuevo, float max_delta) {
     float delta = nuevo - anterior;
@@ -54,13 +56,45 @@ void FollowController::actualizar() {
     if (d0 <= 0 || d1 <= 0) {
         LOG_WARN("AUTO", "Distancias invalidas d0=%.1f d1=%.1f", d0, d1); return; }
 
-    // Distancia promedio frontal
-    float distancia = (d0 + d1) / 2.0f;
+    // ===== PIPELINE FILTROS =====
+    float dist_crudas[3] = {d0,d1,d2};
+    float dist_mv[3]; media_.actualizar(dist_crudas, dist_mv);
+    float dist_kal[3]; kalman_.filtrar(dist_mv, dist_kal);
 
-    // Para ser fieles a CarroClean usaríamos trilateración + desenrollado + limitar y luego PID.
-    // Aquí mantenemos placeholder: diferencia de sensores escalada pequeña.
-    float angulo_rel = (d0 - d1) * 0.05f;
-    angulo_rel = limitar_cambio(0.0f, angulo_rel, cfg_.max_delta_angulo);
+    // Limitar variación (anti salto) excepto en recuperación gracia
+    if (dist_prev_valid_) {
+        bool saltar_limitador = false;
+        if (in_recovery_) {
+            unsigned long elapsed = millis() - recovery_start_ms_;
+            if (elapsed < cfg_.recovery_grace_ms) saltar_limitador = true; else saltar_limitador = false;
+        }
+        if (!saltar_limitador) {
+            float dist_limited[3];
+            utils::limitar_variacion(dist_kal, dist_prev_, dist_limited, 3, in_recovery_ ? cfg_.recovery_delta_pos : cfg_.max_delta_pos);
+            for (int i=0;i<3;i++) dist_kal[i] = dist_limited[i];
+        }
+    }
+    for(int i=0;i<3;i++) dist_prev_[i]=dist_kal[i]; dist_prev_valid_=true;
+
+    // Trilateración
+    // (Por ahora dependemos de posiciones definidas externamente; placeholder simple si alguna distancia <=0)
+    float pos_tag[3] = {0,0,0};
+    bool dist_validas = (dist_kal[0]>0 && dist_kal[1]>0 && dist_kal[2]>0);
+    if (dist_validas) {
+        // Requiere posiciones de sensores - en esta fase se puede inyectar luego
+        // Aquí asumimos un triángulo aproximado similar al original
+        static const float SENSOR_POS[3][3] = { {280.0f,0,0}, {-280.0f,0,0}, {-165.0f,-270.0f,0} };
+        utils::trilateracion_3d(SENSOR_POS, dist_kal, pos_tag);
+    }
+
+    // Ángulo con desenrollado y limitador
+    float angulo_act = dist_validas ? utils::angulo_direccion_xy(pos_tag) : 0.0f;
+    float angulo_desen = utils::desenrollar_angulo(angulo_prev_, angulo_act);
+    float angulo_rel = utils::limitar_cambio(angulo_prev_, angulo_desen, cfg_.max_delta_angulo);
+    angulo_prev_ = angulo_rel;
+
+    // Distancia promedio frontal (usamos distancias filtradas para control de distancia)
+    float distancia = (dist_kal[0] + dist_kal[1]) / 2.0f;
 
     float umbral = calcular_umbral_dinamico(distancia);
     float correccion = 0.0f;
