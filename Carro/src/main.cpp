@@ -3,6 +3,8 @@
 #include "monitoreo/LoggerReinicios.h"
 #include "config/ConfigPerfil.h"
 #include "motion/DriverMotores.h"
+#include "comms/espnow/EspNowReceiver.h"
+#include "control/manual/ControlManual.h"
 
 using namespace core;
 using namespace monitoreo;
@@ -25,9 +27,18 @@ void setup() {
 
     // Instanciar módulos condicionalmente según el perfil
     static motion::DriverMotores driverMotores(perfil.motores);
-    if (perfil.motores.pin_enable >= 0) {
+    static comms::EspNowReceiver espNow(perfil.comms.canal_wifi);
+    static control::ControlManual ctrlManual(perfil.control, driverMotores);
+
+    if (perfil.motores.pin_enable >= 0)
         core::GestorSistema::instancia().registrar(&driverMotores);
-    }
+    if (perfil.comms.habilitar_espnow)
+        core::GestorSistema::instancia().registrar(&espNow);
+    if (perfil.control.habilitar_control_manual)
+        core::GestorSistema::instancia().registrar(&ctrlManual);
+
+    // Conectar callback del receptor al controlador manual
+    espNow.setCallback([&](const comms::ManualCommand& cmd){ ctrlManual.onManualCommand(cmd); });
 
     if (!GestorSistema::instancia().iniciar()) {
         monitoreo::Logger::instancia().logf(config::LogLevel::ERROR, "CORE", "Fallo inicializando modulos");
