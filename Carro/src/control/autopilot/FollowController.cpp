@@ -96,6 +96,11 @@ void FollowController::actualizar() {
     // Distancia promedio frontal (usamos distancias filtradas para control de distancia)
     float distancia = (dist_kal[0] + dist_kal[1]) / 2.0f;
 
+    // ====================== SEGURIDAD / SIGNAL LOST ======================
+    bool early_return = false;
+    manejarSignalLost(dist_kal, distancia, 0.0f /*correccion prelim*/, early_return);
+    if (early_return) return; // safety tomó control
+
     float umbral = calcular_umbral_dinamico(distancia);
     float correccion = 0.0f;
     if (debe_corregir(angulo_rel, umbral)) {
@@ -132,6 +137,70 @@ void FollowController::actualizar() {
         // velocidad = 0 -> frenar
         motion::MotionCommand mc; mc.left = 0; mc.right = 0; mc.source = motion::MotionCommand::Source::AUTOPILOT;
         driver_.aplicar(mc);
+    }
+}
+
+void FollowController::manejarSignalLost(float* distancias_filtradas, float distancia_promedio, float correccion, bool& early_return_flag) {
+    // Determinar si hubo timeout de medición (p.ej. > 1000 ms sin nueva)
+    unsigned long now = millis();
+    bool data_fresh = (now - last_measurement_wall_ms_) < 1000; // criterio similar a CarroClean
+
+    if (!data_fresh) {
+        // SEÑAL PERDIDA
+        if (!signal_lost_) {
+            signal_lost_ = true;
+            signal_lost_time_ = now;
+            last_valid_distance_ = distancia_promedio;
+            was_moving_when_lost_ = (velocidad_actual_ > 0);
+            LOG_WARN("SAFETY", "SIGNAL_LOST ultima_dist=%.1f", last_valid_distance_);
+        }
+
+        if (last_valid_distance_ < cfg_.distancia_fallback) {
+            // Cerca -> detener inmediatamente
+            motion::MotionCommand mc; mc.left=0; mc.right=0; mc.source=motion::MotionCommand::Source::SAFETY;
+            driver_.aplicar(mc);
+            velocidad_actual_ = 0;
+            LOG_INFO("SAFETY", "Cerca objetivo: stop inmediato");
+            early_return_flag = true; return;
+        } else {
+            // Lejos: mantener durante timeout_fallback_s
+            float elapsed_s = (now - signal_lost_time_) / 1000.0f;
+            if (elapsed_s < cfg_.timeout_fallback_s && was_moving_when_lost_) {
+                // Continuar con velocidad reducida fallback
+                int vfb = cfg_.velocidad_fallback;
+                if (vfb > 0) {
+                    auto dv = calcular_velocidades_diferenciales(vfb, last_valid_correction_, cfg_.velocidad_maxima);
+                    motion::MotionCommand mc; mc.left=(int16_t)dv.velL; mc.right=(int16_t)dv.velR; mc.source=motion::MotionCommand::Source::SAFETY;
+                    driver_.aplicar(mc);
+                    LOG_DEBUG("SAFETY", "Fallback continuando %.1fs restante", cfg_.timeout_fallback_s - elapsed_s);
+                    early_return_flag = true; return;
+                }
+            } else {
+                motion::MotionCommand mc; mc.left=0; mc.right=0; mc.source=motion::MotionCommand::Source::SAFETY;
+                driver_.aplicar(mc);
+                velocidad_actual_ = 0;
+                LOG_INFO("SAFETY", "Fallback timeout -> stop");
+                early_return_flag = true; return;
+            }
+        }
+    } else {
+        // SEÑAL VÁLIDA
+        if (signal_lost_) {
+            signal_lost_ = false;
+            in_recovery_ = true; recovery_start_ms_ = now; recovery_cycles_ = 0;
+            saved_normal_Q_ = kalman_.getQ();
+            kalman_.setQ(cfg_.recovery_Q_temp);
+            kalman_.forceState(distancias_filtradas, cfg_.recovery_P_init);
+            LOG_INFO("RECOVERY", "Iniciada Q=%.3f->%.3f P=%.1f", saved_normal_Q_, cfg_.recovery_Q_temp, cfg_.recovery_P_init);
+        }
+        if (in_recovery_) {
+            recovery_cycles_++;
+            if (recovery_cycles_ >= cfg_.recovery_k_cycles && (now - recovery_start_ms_) > cfg_.recovery_grace_ms) {
+                kalman_.setQ(saved_normal_Q_);
+                in_recovery_ = false;
+                LOG_INFO("RECOVERY", "Completada, Q restaurada=%.4f", saved_normal_Q_);
+            }
+        }
     }
 }
 
