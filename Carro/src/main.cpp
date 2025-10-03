@@ -8,6 +8,7 @@
 #include "control/manual/ControlManual.h"
 #include "config/ConfigControl.h"
 #include "control/autopilot/FollowController.h"
+#include "uwb/UWBCoreFacade.h"
 
 using namespace core;
 using namespace monitoreo;
@@ -35,6 +36,8 @@ void setup() {
     static comms::EspNowReceiver espNow(perfil.comms.canal_wifi);
     static control::ControlManual ctrlManual(perfil.control, driverMotores);
     static control::FollowController followCtrl(tuning, driverMotores);
+    static uwb::UwbConfigFacade uwbCfg; // defaults
+    static uwb::UWBCoreFacade uwbFacade(uwbCfg, followCtrl);
 
     if (perfil.motores.pin_enable >= 0)
         core::GestorSistema::instancia().registrar(&driverMotores);
@@ -44,6 +47,7 @@ void setup() {
         core::GestorSistema::instancia().registrar(&ctrlManual);
     if (tuning.velocidad_maxima > 0)
         core::GestorSistema::instancia().registrar(&followCtrl);
+    core::GestorSistema::instancia().registrar(&uwbFacade); // siempre registrar por ahora (simulado)
 
     // Conectar callback del receptor al controlador manual
     espNow.setCallback([&](const comms::ManualCommand& cmd){ 
