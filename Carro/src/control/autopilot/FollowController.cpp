@@ -57,8 +57,9 @@ void FollowController::actualizar() {
     // Distancia promedio frontal
     float distancia = (d0 + d1) / 2.0f;
 
-    // Placeholder de ángulo (hasta migrar trilateración): usar diferencia simple entre sensores frontales
-    float angulo_rel = (d0 - d1) * 0.05f; // factor arbitrario para mantener escala
+    // Para ser fieles a CarroClean usaríamos trilateración + desenrollado + limitar y luego PID.
+    // Aquí mantenemos placeholder: diferencia de sensores escalada pequeña.
+    float angulo_rel = (d0 - d1) * 0.05f;
     angulo_rel = limitar_cambio(0.0f, angulo_rel, cfg_.max_delta_angulo);
 
     float umbral = calcular_umbral_dinamico(distancia);
