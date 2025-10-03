@@ -34,17 +34,6 @@ public:
     void setModo(uint8_t modo) { modo_ = modo; }
     void setManual(int vL, int vR) { manual_L_ = vL; manual_R_ = vR; }
 
-    // Runtime inspection helpers
-    void dumpPID(Stream& out) const;
-    void setPIDAng(float kp, float ki, float kd);
-    void setPIDDist(float kp, float ki, float kd);
-    void dumpMeasurements(Stream& out, uint8_t lastN = 10) const;
-    float getLastCorrection() const { return last_valid_correction_; }
-    float getLastDistance() const { return last_valid_distance_; }
-    uint8_t getModo() const { return modo_; }
-    void getPIDAng(float& kp, float& ki, float& kd) const { kp=pid_ang_.kp; ki=pid_ang_.ki; kd=pid_ang_.kd; }
-    void getPIDDist(float& kp, float& ki, float& kd) const { kp=pid_dist_.kp; ki=pid_dist_.ki; kd=pid_dist_.kd; }
-
 private:
     config::ControlTuning cfg_;
     motion::DriverMotores& driver_;
@@ -73,12 +62,6 @@ private:
     // Filtros
     utils::MediaMovilMulti media_;
     utils::KalmanMulti     kalman_;
-
-    // Ring buffer simple de últimas mediciones para consola
-    static constexpr uint8_t kBufSize = 20;
-    Measurement hist_[kBufSize];
-    uint8_t hist_head_ = 0; // apunta al siguiente a sobrescribir
-    bool hist_full_ = false;
 
     // Métodos auxiliares
     float limitar_cambio(float anterior, float nuevo, float max_delta);
