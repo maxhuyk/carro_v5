@@ -6,6 +6,8 @@
 #include "motion/DriverMotores.h"
 #include "comms/espnow/EspNowReceiver.h"
 #include "control/manual/ControlManual.h"
+#include "config/ConfigControl.h"
+#include "control/autopilot/FollowController.h"
 
 using namespace core;
 using namespace monitoreo;
@@ -29,8 +31,10 @@ void setup() {
 
     // Instanciar módulos condicionalmente según el perfil
     static motion::DriverMotores driverMotores(perfil.motores);
+    static config::ControlTuning tuning = config::obtenerControlTuningDefault();
     static comms::EspNowReceiver espNow(perfil.comms.canal_wifi);
     static control::ControlManual ctrlManual(perfil.control, driverMotores);
+    static control::FollowController followCtrl(tuning, driverMotores);
 
     if (perfil.motores.pin_enable >= 0)
         core::GestorSistema::instancia().registrar(&driverMotores);
@@ -38,9 +42,15 @@ void setup() {
         core::GestorSistema::instancia().registrar(&espNow);
     if (perfil.control.habilitar_control_manual)
         core::GestorSistema::instancia().registrar(&ctrlManual);
+    if (tuning.velocidad_maxima > 0)
+        core::GestorSistema::instancia().registrar(&followCtrl);
 
     // Conectar callback del receptor al controlador manual
-    espNow.setCallback([&](const comms::ManualCommand& cmd){ ctrlManual.onManualCommand(cmd); });
+    espNow.setCallback([&](const comms::ManualCommand& cmd){ 
+        ctrlManual.onManualCommand(cmd);
+        // También actualizamos modo al follow controller (modo viene en cmd.modo)
+        followCtrl.setModo(cmd.modo);
+    });
 
     if (!GestorSistema::instancia().iniciar()) {
         LOG_ERROR("CORE", "Fallo inicializando modulos");

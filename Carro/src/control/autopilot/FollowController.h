@@ -1,0 +1,66 @@
+#pragma once
+#include <Arduino.h>
+#include "core/Modulo.h"
+#include "motion/DriverMotores.h"
+#include "monitoreo/LogMacros.h"
+#include "config/ConfigControl.h"
+#include "control/autopilot/PID.h"
+
+namespace control {
+
+struct Measurement {
+    float distancias[3];
+    bool  anchor_ok[3];
+    uint32_t count = 0;
+    uint32_t ts_ms = 0;
+};
+
+// Resultado de cálculo diferencial
+struct DiffVel { float velL; float velR; float giro_norm; };
+
+class FollowController : public core::Modulo {
+public:
+    FollowController(const config::ControlTuning& cfg, motion::DriverMotores& driver)
+    : cfg_(cfg), driver_(driver) {}
+
+    bool iniciar() override;
+    void actualizar() override;
+
+    // Alimentar nueva medición (simulada hasta migrar UWB real)
+    void pushMeasurement(const Measurement& m);
+
+    // Set modo y velocidades manuales (para gating modo 1/3 similar a CarroClean)
+    void setModo(uint8_t modo) { modo_ = modo; }
+    void setManual(int vL, int vR) { manual_L_ = vL; manual_R_ = vR; }
+
+private:
+    config::ControlTuning cfg_;
+    motion::DriverMotores& driver_;
+
+    // Buffers
+    Measurement last_; bool has_measurement_ = false;
+
+    // Estados heredados
+    bool signal_lost_ = false; unsigned long signal_lost_time_ = 0; bool in_recovery_ = false;
+    float saved_normal_Q_ = 0; // placeholder
+    unsigned long recovery_start_ms_ = 0; int recovery_cycles_ = 0;
+    float last_valid_distance_ = 0; float last_valid_correction_ = 0; int last_valid_velocity_ = 0; bool was_moving_when_lost_ = false;
+
+    // PIDs
+    PIDState pid_ang_{}; PIDState pid_dist_{};
+
+    // Velocidad suavizada
+    float velocidad_actual_ = 0.0f;
+
+    // Modo / manual
+    uint8_t modo_ = 0; int manual_L_ = 0; int manual_R_ = 0;
+
+    // Métodos auxiliares
+    float limitar_cambio(float anterior, float nuevo, float max_delta);
+    float calcular_umbral_dinamico(float distancia);
+    bool debe_corregir(float angulo_relativo, float umbral);
+    float suavizar_velocidad(float actual, float objetivo, float acel, float desacel);
+    DiffVel calcular_velocidades_diferenciales(int v_lineal, float correccion, int max_v);
+};
+
+} // namespace control
