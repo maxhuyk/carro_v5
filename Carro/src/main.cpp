@@ -1,0 +1,43 @@
+#include <Arduino.h>
+#include "core/GestorSistema.h"
+#include "monitoreo/LoggerReinicios.h"
+#include "config/ConfigPerfil.h"
+#include "motion/DriverMotores.h"
+
+using namespace core;
+using namespace monitoreo;
+
+// En el futuro: instancias de módulos concretos (ESP-NOW, UWB, Control, Motores).
+// Por ahora sólo demostramos el ciclo de vida básico.
+
+void setup() {
+    Serial.begin(500000);
+    delay(300);
+    Serial.println(F("[BOOT] Iniciando sistema modular"));
+
+    auto t0 = millis();
+
+    // Cargar perfil completo de configuración
+    static config::ConfigPerfil perfil = config::cargarConfigDefault();
+
+    // Iniciar logger con la parte de logging del perfil
+    monitoreo::Logger::instancia().iniciar(perfil.logging);
+
+    // Instanciar módulos condicionalmente según el perfil
+    static motion::DriverMotores driverMotores(perfil.motores);
+    if (perfil.motores.pin_enable >= 0) {
+        core::GestorSistema::instancia().registrar(&driverMotores);
+    }
+
+    if (!GestorSistema::instancia().iniciar()) {
+        monitoreo::Logger::instancia().logf(config::LogLevel::ERROR, "CORE", "Fallo inicializando modulos");
+    }
+    auto t1 = millis();
+    monitoreo::Logger::instancia().registrarBoot(t1 - t0);
+    monitoreo::Logger::instancia().volcarEstado(Serial);
+}
+
+void loop() {
+    GestorSistema::instancia().loop();
+    delay(5);
+}
