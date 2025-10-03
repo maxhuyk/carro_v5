@@ -1,4 +1,6 @@
 #include "EspNowReceiver.h"
+#include <esp_wifi.h>
+#include "monitoreo/LogMacros.h"
 
 namespace comms {
 using monitoreo::Logger;
@@ -21,19 +23,19 @@ EspNowReceiver* EspNowReceiver::instancia_activa_ = nullptr;
 bool EspNowReceiver::iniciar() {
     instancia_activa_ = this;
     WiFi.mode(WIFI_STA);
-    esp_wifi_set_channel(canal_, WIFI_SECOND_CHAN_NONE);
     if (esp_now_init() != ESP_OK) {
-        Logger::instancia().logf(LogLevel::ERROR, "ESPNOW", "Fallo init esp_now");
+        LOG_ERROR("ESPNOW", "Fallo init esp_now");
         return false;
     }
+    // (Opcional) Configurar canal fijo: omitido si símbolo no disponible en entorno Arduino genérico.
     esp_now_register_recv_cb(EspNowReceiver::onDataRecv);
-    Logger::instancia().logf(LogLevel::INFO, "ESPNOW", "Inicializado canal=%u MAC=%s", canal_, WiFi.macAddress().c_str());
+    LOG_INFO("ESPNOW", "Inicializado canal=%u MAC=%s", canal_, WiFi.macAddress().c_str());
     return true;
 }
 
 void EspNowReceiver::actualizar() {
     if (millis() - last_log_ > 5000) {
-        Logger::instancia().logf(LogLevel::DEBUG, "ESPNOW", "Paquetes=%lu", (unsigned long)paquetes_);
+    LOG_DEBUG("ESPNOW", "Paquetes=%lu", (unsigned long)paquetes_);
         last_log_ = millis();
     }
 }
@@ -45,13 +47,13 @@ void EspNowReceiver::onDataRecv(const uint8_t* mac, const uint8_t* incomingData,
 
 void EspNowReceiver::handlePacket(const uint8_t* data, int len) {
     if (len != sizeof(EspNowDataV2)) {
-        Logger::instancia().logf(LogLevel::WARN, "ESPNOW", "Tam inesperado=%d", len);
+    LOG_WARN("ESPNOW", "Tam inesperado=%d", len);
         return;
     }
     EspNowDataV2 pkt;
     memcpy(&pkt, data, sizeof(pkt));
     if (pkt.version != 2) {
-        Logger::instancia().logf(LogLevel::WARN, "ESPNOW", "Version desconocida=%u", pkt.version);
+    LOG_WARN("ESPNOW", "Version desconocida=%u", pkt.version);
         return;
     }
     paquetes_++;

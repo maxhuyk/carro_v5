@@ -1,4 +1,5 @@
 #include "ControlManual.h"
+#include "monitoreo/LogMacros.h"
 
 namespace control {
 using monitoreo::Logger; using config::LogLevel; using motion::MotionCommand;
@@ -35,12 +36,12 @@ void ControlManual::onManualCommand(const comms::ManualCommand& cmd) {
     vL = constrain(vL, -cfg_.velocidad_max, cfg_.velocidad_max);
     vR = constrain(vR, -cfg_.velocidad_max, cfg_.velocidad_max);
 
-    MotionCommand mc{ (int16_t)vL, (int16_t)vR, MotionCommand::Source::MANUAL };
+    MotionCommand mc; mc.left = (int16_t)vL; mc.right = (int16_t)vR; mc.source = MotionCommand::Source::MANUAL;
     driver_.aplicar(mc);
 
     static uint32_t counter = 0;
     if (++counter % 40 == 0) {
-        Logger::instancia().logf(LogLevel::DEBUG, "MANUAL", "modo=%u ax=%u ay=%u L=%d R=%d", cmd.modo, cmd.ax_raw, cmd.ay_raw, vL, vR);
+        LOG_DEBUG("MANUAL", "modo=%u ax=%u ay=%u L=%d R=%d", cmd.modo, cmd.ax_raw, cmd.ay_raw, vL, vR);
     }
 }
 

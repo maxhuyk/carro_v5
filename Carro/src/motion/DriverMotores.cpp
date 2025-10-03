@@ -1,4 +1,5 @@
 #include "DriverMotores.h"
+#include "monitoreo/LogMacros.h"
 
 namespace motion {
 using monitoreo::Logger;
@@ -14,7 +15,7 @@ bool DriverMotores::iniciar() {
     configurarPWM();
     stop();
     last_cmd_ms_ = millis();
-    Logger::instancia().logf(LogLevel::INFO, "MOTOR", "Driver iniciado (freq=%lu res=%u)", (unsigned long)cfg_.pwm_freq, cfg_.pwm_res_bits);
+    LOG_INFO("MOTOR", "Driver iniciado (freq=%lu res=%u)", (unsigned long)cfg_.pwm_freq, cfg_.pwm_res_bits);
     return true;
 }
 
@@ -38,7 +39,7 @@ void DriverMotores::actualizar() {
     // Timeout de seguridad
     if ((millis() - last_cmd_ms_) > cfg_.timeout_ms) {
         if (ultimo_.left != 0 || ultimo_.right != 0) {
-            Logger::instancia().logf(LogLevel::WARN, "MOTOR", "Timeout sin comando - deteniendo");
+            LOG_WARN("MOTOR", "Timeout sin comando - deteniendo");
             stop();
         }
     }
@@ -46,7 +47,7 @@ void DriverMotores::actualizar() {
 
 void DriverMotores::detener() {
     stop();
-    Logger::instancia().logf(LogLevel::INFO, "MOTOR", "Driver detenido");
+    LOG_INFO("MOTOR", "Driver detenido");
 }
 
 void DriverMotores::stop() {
@@ -102,7 +103,7 @@ void DriverMotores::aplicar(const MotionCommand& cmd) {
     else      { ledcWrite(CH_R1, 0);     ledcWrite(CH_R2, dutyR); }
 
     if (cfg_.log_detallado) {
-        Logger::instancia().logf(LogLevel::DEBUG, "MOTOR", "Cmd L=%d R=%d -> dutyL=%d dutyR=%d", cmd.left, cmd.right, dutyL, dutyR);
+    LOG_DEBUG("MOTOR", "Cmd L=%d R=%d -> dutyL=%d dutyR=%d", cmd.left, cmd.right, dutyL, dutyR);
     }
 }
 

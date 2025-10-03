@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "core/GestorSistema.h"
 #include "monitoreo/LoggerReinicios.h"
+#include "monitoreo/LogMacros.h"
 #include "config/ConfigPerfil.h"
 #include "motion/DriverMotores.h"
 #include "comms/espnow/EspNowReceiver.h"
@@ -15,7 +16,8 @@ using namespace monitoreo;
 void setup() {
     Serial.begin(500000);
     delay(300);
-    Serial.println(F("[BOOT] Iniciando sistema modular"));
+    // Mensaje inicial solo para asegurar que el Serial está activo antes del logger
+    Serial.println(F("[BOOT] Inicializando (se cambiará a logger)..."));
 
     auto t0 = millis();
 
@@ -41,11 +43,13 @@ void setup() {
     espNow.setCallback([&](const comms::ManualCommand& cmd){ ctrlManual.onManualCommand(cmd); });
 
     if (!GestorSistema::instancia().iniciar()) {
-        monitoreo::Logger::instancia().logf(config::LogLevel::ERROR, "CORE", "Fallo inicializando modulos");
+        LOG_ERROR("CORE", "Fallo inicializando modulos");
+    } else {
+        LOG_INFO("CORE", "Modulos iniciados");
     }
     auto t1 = millis();
     monitoreo::Logger::instancia().registrarBoot(t1 - t0);
-    monitoreo::Logger::instancia().volcarEstado(Serial);
+    LOG_INFO("BOOT", "Duracion init=%lums", (unsigned long)(t1-t0));
 }
 
 void loop() {
