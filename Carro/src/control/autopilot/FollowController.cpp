@@ -13,7 +13,12 @@ bool FollowController::iniciar() {
 }
 
 void FollowController::pushMeasurement(const Measurement& m) {
-    last_ = m; has_measurement_ = true; last_measurement_wall_ms_ = millis(); }
+    last_ = m; has_measurement_ = true; last_measurement_wall_ms_ = millis();
+    // guardar en ring buffer
+    hist_[hist_head_] = m;
+    hist_head_ = (hist_head_ + 1) % kBufSize;
+    if (hist_head_ == 0) hist_full_ = true;
+}
 
 float FollowController::limitar_cambio(float anterior, float nuevo, float max_delta) {
     float delta = nuevo - anterior;
@@ -132,6 +137,9 @@ void FollowController::actualizar() {
         auto dv = calcular_velocidades_diferenciales(v_lineal, correccion, cfg_.velocidad_maxima);
         motion::MotionCommand mc; mc.left = (int16_t)dv.velL; mc.right = (int16_t)dv.velR; mc.source = motion::MotionCommand::Source::AUTOPILOT;
         driver_.aplicar(mc);
+        // actualizar última corrección válida para fallback
+        last_valid_correction_ = correccion;
+        last_valid_distance_ = distancia;
         LOG_DEBUG("AUTO", "dist=%.0f err=%.0f v=%d corr=%.2f L=%d R=%d", distancia, error_dist, v_lineal, correccion, (int)dv.velL, (int)dv.velR);
     } else {
         // velocidad = 0 -> frenar
@@ -201,6 +209,34 @@ void FollowController::manejarSignalLost(float* distancias_filtradas, float dist
                 LOG_INFO("RECOVERY", "Completada, Q restaurada=%.4f", saved_normal_Q_);
             }
         }
+    }
+}
+
+// ================== Runtime helpers ==================
+void FollowController::dumpPID(Stream& out) const {
+    out.printf("PID_ANG kp=%.3f ki=%.3f kd=%.3f | PID_DIST kp=%.3f ki=%.3f kd=%.3f\n", pid_ang_.kp, pid_ang_.ki, pid_ang_.kd, pid_dist_.kp, pid_dist_.ki, pid_dist_.kd);
+}
+
+void FollowController::setPIDAng(float kp, float ki, float kd) {
+    pid_ang_.kp = kp; pid_ang_.ki = ki; pid_ang_.kd = kd;
+}
+
+void FollowController::setPIDDist(float kp, float ki, float kd) {
+    pid_dist_.kp = kp; pid_dist_.ki = ki; pid_dist_.kd = kd;
+}
+
+void FollowController::dumpMeasurements(Stream& out, uint8_t lastN) const {
+    if (lastN > kBufSize) lastN = kBufSize;
+    uint8_t total = hist_full_ ? kBufSize : hist_head_;
+    if (total == 0) { out.println(F("(sin mediciones)")); return; }
+    if (lastN > total) lastN = total;
+    out.printf("Ultimas %u mediciones (mostrando %u):\n", total, lastN);
+    // iterar desde la más reciente hacia atrás
+    for (uint8_t i = 0; i < lastN; ++i) {
+        int idx = (hist_head_ - 1 - i);
+        if (idx < 0) idx += kBufSize;
+        const Measurement& m = hist_[idx];
+        out.printf("[%lu] d=%.0f/%.0f/%.0f ok=%d%d%d ts=%lu\n", (unsigned long)m.count, m.distancias[0], m.distancias[1], m.distancias[2], m.anchor_ok[0], m.anchor_ok[1], m.anchor_ok[2], (unsigned long)m.ts_ms);
     }
 }
 
