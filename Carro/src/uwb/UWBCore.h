@@ -48,7 +48,14 @@ private:
     DW3000Class a2_{1,5,27};
     DW3000Class a3_{2,6,13};
 
-    struct AnchorState { uint16_t consecNotIdle=0; unsigned long lastSuccessMs=0; uint8_t softResets=0; uint8_t hardResets=0; };
+    struct AnchorState {
+        uint16_t consecNotIdle=0;       // veces sin IDLE consecutivas
+        uint16_t consecTimeouts=0;      // timeouts consecutivos (no respuesta)
+        uint16_t consecErrors=0;        // frames de error consecutivos
+        unsigned long lastSuccessMs=0;  // última medición válida
+        uint8_t softResets=0;
+        uint8_t hardResets=0;
+    };
     AnchorState s1_, s2_, s3_;
 
     // Task static trampolines

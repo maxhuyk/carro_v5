@@ -129,17 +129,26 @@ void UWBCore::taskLoop() {
         // Delays CarroClean (comentario original: 1ms cycle + inter-anchor 1000us)
         try_anchor_recovery(a1_, s1_, "A1");
         float d1 = dsr_once(a1_, failCountA1, cfg_.rx_timeout_ms);
-        if(!isnan(d1)) s1_.lastSuccessMs = millis();
+        if(!isnan(d1)) { s1_.lastSuccessMs = millis(); s1_.consecTimeouts=0; s1_.consecErrors=0; }
+        else { if(!a1_.checkForIDLE()) s1_.consecNotIdle++; s1_.consecTimeouts++; }
         delayMicroseconds(cfg_.inter_anchor_delay_us);
 
         try_anchor_recovery(a2_, s2_, "A2");
         float d2 = dsr_once(a2_, failCountA2, cfg_.rx_timeout_ms);
-        if(!isnan(d2)) s2_.lastSuccessMs = millis();
+        if(!isnan(d2)) { s2_.lastSuccessMs = millis(); s2_.consecTimeouts=0; s2_.consecErrors=0; }
+        else { if(!a2_.checkForIDLE()) s2_.consecNotIdle++; s2_.consecTimeouts++; }
         delayMicroseconds(cfg_.inter_anchor_delay_us);
 
         try_anchor_recovery(a3_, s3_, "A3");
         float d3 = dsr_once(a3_, failCountA3, cfg_.rx_timeout_ms);
-        if(!isnan(d3)) s3_.lastSuccessMs = millis();
+        if(!isnan(d3)) { s3_.lastSuccessMs = millis(); s3_.consecTimeouts=0; s3_.consecErrors=0; }
+        else { if(!a3_.checkForIDLE()) s3_.consecNotIdle++; s3_.consecTimeouts++; }
+
+        // Recovery adicional >10s sin éxito + no IDLE (igual a CarroClean)
+        unsigned long nowMs2 = millis();
+        if ((nowMs2 - s1_.lastSuccessMs) > 10000 && s1_.consecNotIdle >= 2) { LOG_WARN("UWB","A1 >10s sin exito -> reinit"); anchor_soft_reinit(a1_); s1_.softResets++; s1_.consecNotIdle=0; }
+        if ((nowMs2 - s2_.lastSuccessMs) > 10000 && s2_.consecNotIdle >= 2) { LOG_WARN("UWB","A2 >10s sin exito -> reinit"); anchor_soft_reinit(a2_); s2_.softResets++; s2_.consecNotIdle=0; }
+        if ((nowMs2 - s3_.lastSuccessMs) > 10000 && s3_.consecNotIdle >= 2) { LOG_WARN("UWB","A3 >10s sin exito -> reinit"); anchor_soft_reinit(a3_); s3_.softResets++; s3_.consecNotIdle=0; }
 
         // Publicar
         if (xSemaphoreTake(sem_, pdMS_TO_TICKS(2)) == pdTRUE) {
