@@ -1,10 +1,10 @@
-<!-- README principal se sincroniza con docs/index.md -->
-
-
-
 # Carro – Documentación Técnica
 
- [Documentación HTML](Carro/docs/build/html/index.html)
+> Acceso rápido a la versión HTML (después de generar con `doxygen`):  
+> - Desde la raíz del repo: `Carro/docs/build/html/index.html`  
+> - Desde este archivo (en `docs/`): `build/html/index.html`  
+> - Link directo (puede no existir en GitHub si no se sube el build): [Documentación HTML](../docs/build/html/index.html)
+
 
 ## Visión General
 Plataforma embarcada para un carro seguidor basado en ESP32 + DW3000 (UWB) que permite:
@@ -78,6 +78,9 @@ ESP-NOW  ───────►  EspNowReceiver │ FollowController    │ �
 ## Estilo de Código
 - Comentarios concisos, preferencia por funciones puras en utilidades.
 - Lógica crítica (safety/follow) sin macros ocultas.
+
+
+
 
 ---
 > Última actualización generada automáticamente.
