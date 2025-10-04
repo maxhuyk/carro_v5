@@ -71,19 +71,11 @@ ESP-NOW  ───────►  EspNowReceiver │ FollowController    │ �
 | Recovery Q temp | 1.0 | `ConfigControl.h` |
 
 ## Estilo de Código
-- Nombres en español para reflejar intención original.
 - Comentarios concisos, preferencia por funciones puras en utilidades.
 - Lógica crítica (safety/follow) sin macros ocultas.
 
-## Autoría
-Desarrollo y migración modular: **Máximo Huykman**.  
-Optimización, refactor y documentación: soporte asistido (IA).  
-Por favor referenciar este repositorio al reutilizar fragmentos.
 
-## Próximas Mejoras Sugeridas
-- Métricas runtime (frecuencia UWB y control) publicadas vía logging.
-- Tests unitarios mínimos de trilateración y filtros.
-- Integración continua para compilación y artefactos de firmware.
+
 
 ---
 > Última actualización generada automáticamente.
