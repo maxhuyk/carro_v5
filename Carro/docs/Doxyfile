@@ -23,9 +23,19 @@ USE_MDFILE_AS_MAINPAGE = index.md
 HTML_OUTPUT            = html
 GENERATE_TREEVIEW      = YES
 ALPHABETICAL_INDEX     = NO
+HTML_EXTRA_STYLESHEET  = doxygen-awesome.css
 
 WARN_IF_UNDOCUMENTED   = NO
 WARN_IF_DOC_ERROR      = YES
 
 # Diagrams off (activar si tienes Graphviz)
 HAVE_DOT               = NO
+
+# Mejora de legibilidad sin recompilar Graphviz
+DISABLE_INDEX          = NO
+SHOW_USED_FILES        = NO
+INLINE_SOURCES         = NO
+
+# Estilo: permitir que los comentarios @file encabezados se desplieguen primero
+SORT_BRIEF_DOCS        = YES
+SORT_MEMBER_DOCS       = YES

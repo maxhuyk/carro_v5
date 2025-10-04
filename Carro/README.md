@@ -96,3 +96,29 @@ struct MotionCommand {
 - Copiar la configuración base (`config`) y la lógica auxiliar (`utils`) desde `CarroClean`, asegurando que los namespaces coincidan con esta documentación.
 
 Mantendremos este README actualizado conforme se vayan migrando módulos y cerrando dependencias.
+
+## Generar documentación (Doxygen)
+
+La documentación HTML se genera localmente usando únicamente el `Doxyfile` del directorio `docs`.
+
+1. Instalar Doxygen (Windows): descargar instalador desde https://www.doxygen.nl y asegurarse de que `doxygen.exe` quede en el PATH.
+2. (Opcional) Verificar versión: `doxygen -v`.
+3. Desde la carpeta `Carro/docs` ejecutar:
+
+```bash
+doxygen Doxyfile
+```
+
+La salida se ubicará en `Carro/docs/build/html/index.html`.
+
+### Hoja de estilo
+
+Se incluye un tema ligero (`doxygen-awesome.css` reducido) que se aplica automáticamente mediante la directiva `HTML_EXTRA_STYLESHEET` en `Doxyfile`.
+
+### Actualizar comentarios
+
+Todos los headers en `src/` poseen ahora bloques `@file` y descripciones. Para ver advertencias de documentación incompleta puedes cambiar `WARN_IF_UNDOCUMENTED = YES` temporalmente en `docs/Doxyfile`.
+
+### Limpieza
+
+Para regenerar desde cero simplemente borrar `docs/build` antes de ejecutar Doxygen nuevamente.
