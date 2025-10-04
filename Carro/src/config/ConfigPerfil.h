@@ -19,6 +19,11 @@ struct ControlConfig {
     bool habilitar_control_auto = true;
     bool habilitar_control_manual = true;
     int velocidad_max = 75; // -100..100 lógica
+    // Rango crudo de joystick y zona muerta (para ControlManual)
+    int joy_raw_min = 600;
+    int joy_raw_max = 3400;
+    int joy_raw_center = 2000;
+    int joy_deadzone = 200; // +/- alrededor de center
 };
 
 // Perfil completo que agrupa todos los sub-configs

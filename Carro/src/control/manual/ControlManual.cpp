@@ -6,10 +6,10 @@ using monitoreo::Logger; using config::LogLevel; using motion::MotionCommand;
 
 void ControlManual::onManualCommand(const comms::ManualCommand& cmd) {
     // Normalización simple similar a CarroClean (-1..1) y luego a -velocidad_max..velocidad_max
-    constexpr int RAW_MIN = 600;
-    constexpr int RAW_MAX = 3400;
-    constexpr int RAW_CENTER = 2000;
-    constexpr int RAW_DEAD = 200;
+    const int RAW_MIN = cfg_.joy_raw_min;
+    const int RAW_MAX = cfg_.joy_raw_max;
+    const int RAW_CENTER = cfg_.joy_raw_center;
+    const int RAW_DEAD = cfg_.joy_deadzone;
 
     auto mapAxis = [&](int raw){
         if (raw < RAW_CENTER - RAW_DEAD) {
