@@ -7,6 +7,10 @@
 		{
 			"name": "TAGClean",
 			"path": "TAGClean"
+		},
+		{
+			"name": "Carro",
+			"path": "Carro"
 		}
 	],
 	"settings": {
