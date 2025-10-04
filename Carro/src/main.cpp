@@ -8,7 +8,7 @@
 #include "control/manual/ControlManual.h"
 #include "config/ConfigControl.h"
 #include "control/autopilot/FollowController.h"
-#include "uwb/UWBCorePort.h"
+#include "uwb/UWBCore.h"
 
 using namespace core;
 using namespace monitoreo;
@@ -38,8 +38,8 @@ void setup() {
     static comms::EspNowReceiver espNow(perfil.comms.canal_wifi);
     static control::ControlManual ctrlManual(perfil.control, driverMotores);
     static control::FollowController followCtrl(tuning, driverMotores);
-    static uwb::UWBCoreConfig uwbCfg; // valores por defecto portados
-    static uwb::UWBCorePort uwbCore(uwbCfg, followCtrl);
+    static uwb::UWBCoreConfig uwbCfg; // fidelidad CarroClean
+    static uwb::UWBCore uwbCore(uwbCfg, followCtrl);
 
     if (perfil.motores.pin_enable >= 0)
         core::GestorSistema::instancia().registrar(&driverMotores);
