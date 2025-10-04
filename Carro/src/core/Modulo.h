@@ -1,3 +1,7 @@
+/**
+ * @file Modulo.h
+ * @brief Clase base abstracta para todos los módulos del sistema (ciclo de vida homogéneo).
+ */
 #pragma once
 
 #include <Arduino.h>

@@ -1,4 +1,7 @@
-// LogMacros.h - Macros de conveniencia para el sistema de logging
+/**
+ * @file LogMacros.h
+ * @brief Macros de conveniencia para emitir logs con formato y niveles.
+ */
 #pragma once
 #include "monitoreo/LoggerReinicios.h"
 

@@ -1,3 +1,11 @@
+/**
+ * @file EspNowReceiver.h
+ * @brief Recepción de paquetes manuales vía ESP-NOW (modo unidireccional).
+ *
+ * Encapsula inicialización de WiFi en modo STA, registro de callback de ESP-NOW y
+ * parsing de un paquete compacto ManualCommand. Expone un callback de alto nivel
+ * para integración con `ControlManual`.
+ */
 #pragma once
 #include <Arduino.h>
 #include <esp_now.h>
@@ -7,6 +15,9 @@
 
 namespace comms {
 
+/**
+ * @brief Paquete de comando manual enviado desde el control remoto.
+ */
 struct ManualCommand {
     uint32_t timestamp_ms;
     uint8_t modo;
@@ -25,11 +36,12 @@ public:
     void actualizar() override;
     void detener() override {}
 
+    /** Asigna callback de entrega de paquetes decodificados. */
     void setCallback(ManualCallback cb) { callback_ = cb; }
 
 private:
-    static void onDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len);
-    void handlePacket(const uint8_t* data, int len);
+    static void onDataRecv(const uint8_t* mac, const uint8_t* incomingData, int len); ///< Callback ESP-NOW estático
+    void handlePacket(const uint8_t* data, int len);                                  ///< Decodifica y valida paquete
 
     uint8_t canal_;
     ManualCallback callback_{};

@@ -1,3 +1,7 @@
+/**
+ * @file GestorSistema.h
+ * @brief Gestor central que orquesta el ciclo de vida de los módulos registrados.
+ */
 #pragma once
 #include <Arduino.h>
 #include <vector>

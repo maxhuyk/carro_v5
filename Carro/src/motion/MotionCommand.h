@@ -1,3 +1,7 @@
+/**
+ * @file MotionCommand.h
+ * @brief Estructura de comando lógico de movimiento (antes de mapear a PWM crudo).
+ */
 #pragma once
 #include <Arduino.h>
 

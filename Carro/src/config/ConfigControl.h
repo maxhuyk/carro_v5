@@ -1,9 +1,16 @@
+/**
+ * @file ConfigControl.h
+ * @brief Parámetros de sintonía y límites de control (filtros, PID angular, heurísticas).
+ */
 #pragma once
 #include <Arduino.h>
 
 namespace config {
 
 // Parámetros de control (portados desde CarroClean config.h)
+/**
+ * @brief Sintonía y constantes de control utilizadas por FollowController.
+ */
 struct ControlTuning {
     // Filtros
     uint8_t media_movil_ventana = 3;
@@ -37,7 +44,7 @@ struct ControlTuning {
     float pid_ang_salida_max = 10.0f;
     float pid_ang_integral_max = 20.0f;
 
-    // Distancia objetivo (se mantiene para heurística; PID distancia se elimina por no usarse en CarroClean final)
+    // Distancia objetivo (se mantiene para heurística; PID distancia eliminado por no usarse)
     float distancia_objetivo = 1500.0f; // mm
 
     // Velocidades / aceleraciones (escala -100..100)

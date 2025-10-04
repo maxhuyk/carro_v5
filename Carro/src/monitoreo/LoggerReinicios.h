@@ -1,4 +1,7 @@
-// LoggerReinicios.h - Logger general con soporte de niveles y archivo SPIFFS
+/**
+ * @file LoggerReinicios.h
+ * @brief Logger con soporte de niveles, persistencia en SPIFFS y registro de reinicios.
+ */
 #pragma once
 #include <Arduino.h>
 #include <FS.h>
