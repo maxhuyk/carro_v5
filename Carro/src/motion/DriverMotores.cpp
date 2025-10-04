@@ -15,6 +15,7 @@ bool DriverMotores::iniciar() {
     configurarPWM();
     stop();
     last_cmd_ms_ = millis();
+    ultimo_.source = motion::MotionCommand::Source::SAFETY;
     LOG_INFO("MOTOR", "Driver iniciado (freq=%lu res=%u)", (unsigned long)cfg_.pwm_freq, cfg_.pwm_res_bits);
     return true;
 }

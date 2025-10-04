@@ -25,7 +25,7 @@ private:
     config::MotorConfig cfg_;
     bool pwm_ok_ = false;
     unsigned long last_cmd_ms_ = 0;
-    motion::MotionCommand ultimo_{0,0,motion::MotionCommand::Source::SAFETY};
+    motion::MotionCommand ultimo_{}; // se inicializa en iniciar()
 
     // Helpers
     void configurarPWM();
