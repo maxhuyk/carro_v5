@@ -6,6 +6,7 @@
 
 namespace uwb {
 
+/** Datos crudos de UWB producidos por la tarea (distancias en cm). */
 struct UWBRawData {
     float d1; float d2; float d3; // cm (como CarroClean)
     bool v1; bool v2; bool v3;
@@ -23,6 +24,10 @@ struct UWBCoreConfig {
     uint16_t cycle_delay_ms = 1;           // CarroClean: 1ms
 };
 
+/**
+ * Tarea de ranging UWB (multi-anchor) que corre en Core0 y entrega
+ * mediciones mm al FollowController. Implementa recuperación soft/hard.
+ */
 class UWBCore : public core::Modulo {
 public:
     UWBCore(const UWBCoreConfig& cfg, control::FollowController& follow)

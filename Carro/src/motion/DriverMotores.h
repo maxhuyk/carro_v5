@@ -7,6 +7,12 @@
 
 namespace motion {
 
+/**
+ * Driver de motores (dual H-bridge vía DRV8701 equivalente):
+ *  - Aplica deadzone porcentual (cfg_.deadzone_percent)
+ *  - Mapea -100..100 a PWM 0..(2^res-1)
+ *  - Gestiona ENABLE y timeout de seguridad
+ */
 class DriverMotores : public core::Modulo {
 public:
     explicit DriverMotores(const config::MotorConfig& cfg) : cfg_(cfg) {}
@@ -15,10 +21,10 @@ public:
     void actualizar() override;
     void detener() override;
 
-    // Aplica un comando lógico (internamente aplica deadzone y mapping)
+    /** Aplica un comando lógico (aplica deadzone + mapping PWM). */
     void aplicar(const MotionCommand& cmd);
 
-    // Detiene ambos motores inmediatamente
+    /** Detiene ambos motores inmediatamente y pone ENABLE LOW. */
     void stop();
 
 private:

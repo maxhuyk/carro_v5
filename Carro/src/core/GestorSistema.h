@@ -5,7 +5,7 @@
 
 namespace core {
 
-// Gestor central: registra módulos y coordina su ciclo de vida
+/** Gestor central: registra módulos y coordina su ciclo de vida (iniciar/loop/detener). */
 class GestorSistema {
 public:
     static GestorSistema& instancia();

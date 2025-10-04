@@ -16,9 +16,16 @@ struct Measurement {
     uint32_t ts_ms = 0;
 };
 
-// Resultado de cálculo diferencial
+/** Resultado de cálculo diferencial (salida interna del controlador) */
 struct DiffVel { float velL; float velR; float giro_norm; };
 
+/**
+ * Control de seguimiento UWB.
+ *
+ * Encapsula el pipeline: validación de distancias, media móvil, Kalman,
+ * trilateración, cálculo angular, PID angular, heurística de velocidad y
+ * lógica de safety (signal lost / fallback / recovery).
+ */
 class FollowController : public core::Modulo {
 public:
     FollowController(const config::ControlTuning& cfg, motion::DriverMotores& driver)
@@ -57,7 +64,7 @@ private:
     float dist_prev_[3] = {0,0,0}; bool dist_prev_valid_ = false;
     float angulo_prev_ = 0.0f;
 
-    // PID angular (único utilizado)
+    /** PID angular (único utilizado: Kp,Ki,Kd en ConfigControl) */
     PIDState pid_ang_{};
 
     // Velocidad suavizada
