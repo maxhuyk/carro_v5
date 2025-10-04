@@ -37,13 +37,8 @@ struct ControlTuning {
     float pid_ang_salida_max = 10.0f;
     float pid_ang_integral_max = 20.0f;
 
-    // PID distancia
+    // Distancia objetivo (se mantiene para heurística; PID distancia se elimina por no usarse en CarroClean final)
     float distancia_objetivo = 1500.0f; // mm
-    float pid_dist_kp = 0.3f;
-    float pid_dist_ki = 0.05f;
-    float pid_dist_kd = 0.15f;
-    float pid_dist_alpha = 0.5f;
-    float pid_dist_integral_max = 100.0f;
 
     // Velocidades / aceleraciones (escala -100..100)
     int velocidad_maxima = 75;

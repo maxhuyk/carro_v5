@@ -5,7 +5,6 @@ namespace control {
 
 bool FollowController::iniciar() {
     pid_init(pid_ang_, cfg_.pid_ang_kp, cfg_.pid_ang_ki, cfg_.pid_ang_kd, 0.0f, cfg_.pid_ang_alpha, cfg_.pid_ang_salida_max, cfg_.pid_ang_integral_max);
-    pid_init(pid_dist_, cfg_.pid_dist_kp, cfg_.pid_dist_ki, cfg_.pid_dist_kd, cfg_.distancia_objetivo, cfg_.pid_dist_alpha, cfg_.velocidad_maxima, cfg_.pid_dist_integral_max);
     media_.init(3, cfg_.media_movil_ventana);
     kalman_.init(3, cfg_.kalman_Q, cfg_.kalman_R);
     LOG_INFO("AUTO", "FollowController iniciado");
@@ -110,8 +109,6 @@ void FollowController::actualizar() {
         correccion = pid_update(pid_ang_, angulo_rel);
     }
 
-    // PID distancia -> velocidad objetivo lineal
-    float _ = pid_update(pid_dist_, distancia); // no usamos salida directa, seguimos heurística original
     float error_dist = distancia - cfg_.distancia_objetivo;
     int velocidad_objetivo;
     if (error_dist > 5000) velocidad_objetivo = cfg_.velocidad_maxima; // umbral CarroClean
@@ -202,7 +199,7 @@ void FollowController::manejarSignalLost(float* distancias_filtradas, float dist
             LOG_INFO("RECOVERY", "Iniciada Q=%.3f->%.3f P=%.1f", saved_normal_Q_, cfg_.recovery_Q_temp, cfg_.recovery_P_init);
             // Reset integrales para evitar sobrecorrecciones tras pérdida
             pid_ang_.integral = 0; pid_ang_.prev_error = 0; pid_ang_.first = true;
-            pid_dist_.integral = 0; pid_dist_.prev_error = 0; pid_dist_.first = true;
+            // (No PID distancia que resetear)
             velocidad_actual_ = 0;
             // Rellenar media móvil con la primera medición (replicar comportamiento CarroClean)
             media_.init(3, cfg_.media_movil_ventana);

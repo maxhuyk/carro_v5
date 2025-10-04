@@ -58,8 +58,8 @@ private:
     float dist_prev_[3] = {0,0,0}; bool dist_prev_valid_ = false;
     float angulo_prev_ = 0.0f;
 
-    // PIDs
-    PIDState pid_ang_{}; PIDState pid_dist_{};
+    // PID angular (único utilizado)
+    PIDState pid_ang_{};
 
     // Velocidad suavizada
     float velocidad_actual_ = 0.0f;
