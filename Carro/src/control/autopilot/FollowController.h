@@ -35,7 +35,6 @@ public:
         if (modo_ != modo) {
             // Reset de estados críticos al cambiar de modo
             pid_ang_.integral = 0; pid_ang_.prev_error = 0; pid_ang_.first = true;
-            pid_dist_.integral = 0; pid_dist_.prev_error = 0; pid_dist_.first = true;
             velocidad_actual_ = 0;
         }
         modo_ = modo;
