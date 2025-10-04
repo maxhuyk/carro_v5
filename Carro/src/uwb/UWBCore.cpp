@@ -1,5 +1,8 @@
 #include "UWBCore.h"
 #include "monitoreo/LogMacros.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 namespace uwb {
 using namespace monitoreo;
@@ -7,6 +10,11 @@ using namespace monitoreo;
 static uint16_t failCountA1 = 0, failCountA2 = 0, failCountA3 = 0;
 
 bool UWBCore::iniciar() {
+    // Asegurar inicialización del MCP23008 (equivalente a llamada previa en main CarroClean)
+    if (!DW3000Class::initMCP23008()) {
+        LOG_ERROR("UWB", "Fallo init MCP23008");
+        return false;
+    }
     sem_ = xSemaphoreCreateBinary();
     if (!sem_) return false;
     xSemaphoreGive(sem_);
@@ -40,17 +48,17 @@ bool UWBCore::iniciar() {
 void UWBCore::actualizar() {
     // Consumir dato listo y empujar al FollowController
     if (xSemaphoreTake(sem_, 0) == pdTRUE) {
-        bool ready = data_ready_;
-        UWBRawData local = raw_;
-        if (ready) {
-            data_ready_ = false; // marcar consumido
+        if (data_ready_) {
+            // Leer campos atomizados
+            float d1 = raw_.d1, d2 = raw_.d2, d3 = raw_.d3;
+            bool v1 = raw_.v1, v2 = raw_.v2, v3 = raw_.v3;
+            unsigned long ts = raw_.timestamp;
+            data_ready_ = false;
             xSemaphoreGive(sem_);
-            control::Measurement m; // convertir cm -> mm
-            m.distancias[0] = local.d1 * 10.0f;
-            m.distancias[1] = local.d2 * 10.0f;
-            m.distancias[2] = local.d3 * 10.0f;
-            m.anchor_ok[0] = local.v1; m.anchor_ok[1] = local.v2; m.anchor_ok[2] = local.v3;
-            m.ts_ms = local.timestamp; m.count = measurement_count_;
+            control::Measurement m;
+            m.distancias[0] = d1 * 10.0f; m.distancias[1] = d2 * 10.0f; m.distancias[2] = d3 * 10.0f;
+            m.anchor_ok[0] = v1; m.anchor_ok[1] = v2; m.anchor_ok[2] = v3;
+            m.ts_ms = ts; m.count = measurement_count_;
             follow_.pushMeasurement(m);
         } else {
             xSemaphoreGive(sem_);
