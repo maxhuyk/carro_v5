@@ -4,7 +4,7 @@
 
 # Carro – Documentación Técnica
 
- [Documentación HTML](docs/build/html/index.html)
+ [Documentación HTML](Carro/docs/build/html/index.html)
 
 ## Visión General
 Plataforma embarcada para un carro seguidor basado en ESP32 + DW3000 (UWB) que permite:
