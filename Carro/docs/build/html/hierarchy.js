@@ -1,0 +1,38 @@
+var hierarchy =
+[
+    [ "config::CommsConfig", "structconfig_1_1_comms_config.html", null ],
+    [ "config::ConfigPerfil", "structconfig_1_1_config_perfil.html", null ],
+    [ "config::ControlConfig", "structconfig_1_1_control_config.html", null ],
+    [ "config::ControlTuning", "structconfig_1_1_control_tuning.html", null ],
+    [ "control::DiffVel", "structcontrol_1_1_diff_vel.html", null ],
+    [ "monitoreo::EntradaReinicio", "structmonitoreo_1_1_entrada_reinicio.html", null ],
+    [ "comms::EspNowDataV2", "structcomms_1_1_esp_now_data_v2.html", null ],
+    [ "core::GestorSistema", "classcore_1_1_gestor_sistema.html", null ],
+    [ "utils::KalmanMulti", "classutils_1_1_kalman_multi.html", null ],
+    [ "monitoreo::LineaLog", "structmonitoreo_1_1_linea_log.html", null ],
+    [ "comms::Logger", "classcomms_1_1_logger.html", null ],
+    [ "control::Logger", "classcontrol_1_1_logger.html", null ],
+    [ "monitoreo::Logger", "classmonitoreo_1_1_logger.html", null ],
+    [ "motion::Logger", "classmotion_1_1_logger.html", null ],
+    [ "config::LoggingConfig", "structconfig_1_1_logging_config.html", null ],
+    [ "monitoreo::LoggingConfig", "structmonitoreo_1_1_logging_config.html", null ],
+    [ "comms::ManualCommand", "structcomms_1_1_manual_command.html", null ],
+    [ "control::Measurement", "structcontrol_1_1_measurement.html", null ],
+    [ "utils::MediaMovilMulti", "classutils_1_1_media_movil_multi.html", null ],
+    [ "core::Modulo", "classcore_1_1_modulo.html", [
+      [ "comms::EspNowReceiver", "classcomms_1_1_esp_now_receiver.html", null ],
+      [ "control::ControlManual", "classcontrol_1_1_control_manual.html", null ],
+      [ "control::FollowController", "classcontrol_1_1_follow_controller.html", null ],
+      [ "motion::DriverMotores", "classmotion_1_1_driver_motores.html", null ],
+      [ "uwb::UWBCore", "classuwb_1_1_u_w_b_core.html", null ]
+    ] ],
+    [ "control::MotionCommand", "structcontrol_1_1_motion_command.html", null ],
+    [ "motion::MotionCommand", "structmotion_1_1_motion_command.html", null ],
+    [ "config::MotorConfig", "structconfig_1_1_motor_config.html", null ],
+    [ "control::PIDState", "structcontrol_1_1_p_i_d_state.html", null ],
+    [ "config::UwbConfig", "structconfig_1_1_uwb_config.html", null ],
+    [ "uwb::UWBCoreConfig", "structuwb_1_1_u_w_b_core_config.html", null ],
+    [ "uwb::UWBCoreRuntimeCounters", "structuwb_1_1_u_w_b_core_runtime_counters.html", null ],
+    [ "uwb::UWBRawData", "structuwb_1_1_u_w_b_raw_data.html", null ],
+    [ "utils::VelocidadesDiferenciales", "structutils_1_1_velocidades_diferenciales.html", null ]
+];

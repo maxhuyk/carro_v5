@@ -1,13 +1,5 @@
 # Carro – Documentación Técnica
 
-Autor principal: **Máximo Huykman**  
-Colaboración / asistencia: Generación de documentación y soporte estructural asistido (IA).  
-Repositorio: `carro`
-
-## Créditos / Autoría
-Este firmware y la arquitectura modular fueron diseñados y desarrollados por **Máximo Huykman**.  
-El refinamiento de comentarios Doxygen, organización documental y guías de regeneración fueron asistidos por herramientas automáticas.  
-Si reutilizas el código, por favor acredita: *"Proyecto Carro (Máximo Huykman)"* e incluye un enlace al repositorio.
 
 ## Visión General
 Plataforma embarcada para un carro seguidor basado en ESP32 + DW3000 (UWB) que permite:
