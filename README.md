@@ -3,7 +3,7 @@
 > Acceso rápido a la versión HTML (después de generar con `doxygen`):  
 > - Desde la raíz del repo: `Carro/docs/build/html/index.html`  
 > - Desde este archivo (en `Carro/docs/`): `build/html/index.html`  
-> - Link directo (puede no existir en GitHub si no se sube el build): [Documentación HTML](../Carro/docs/build/html/index.html)
+> - Link directo (puede no existir en GitHub si no se sube el build): [Documentación HTML](../docs/build/html/index.html)
 
 
 ## Visión General
