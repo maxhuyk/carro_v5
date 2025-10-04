@@ -1,9 +1,9 @@
 # Carro – Documentación Técnica
 
-> Acceso rápido a la versión HTML (después de generar con `doxygen`):  
-> - Desde la raíz del repo: `docs/build/html/index.html`  
-> - Desde este archivo (en `docs/`): `build/html/index.html`  
-> - Link directo (puede no existir en GitHub si no se sube el build): [Documentación HTML](../docs/build/html/index.html)
+> Acceso rápido a la documentación:
+> - Versión publicada (GitHub Pages, renderizada): https://maxhuyk.github.io/carro/
+> - Versión local generada con Doxygen (clon del repo): `docs/build/html/index.html`
+> - Nota: El enlace relativo `docs/build/html/index.html` dentro de GitHub sólo mostrará el código fuente del HTML; para verlo como sitio usa el link de GitHub Pages o ábrelo localmente en tu navegador.
 
 
 ## Visión General
