@@ -1,0 +1,35 @@
+name: Build & Publish Doxygen Docs
+
+on:
+  push:
+    branches: [ modularizacion ]
+    paths:
+      - '**.h'
+      - '**.cpp'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Doxygen
+        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz
+
+      - name: Generate Docs
+        working-directory: docs
+        run: doxygen Doxyfile
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/build/html
+          force_orphan: true
+          commit_message: 'docs: update Doxygen site'

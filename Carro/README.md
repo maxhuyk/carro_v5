@@ -4,7 +4,9 @@
 
 # Carro – Documentación Técnica
 
- [Documentación HTML](docs/build/html/index.html)
+ [Documentación HTML local](docs/build/html/index.html)
+
+ [Documentación publicada (GitHub Pages)](https://maxhuyk.github.io/carro/) *(se actualiza tras cada push a `modularizacion`)*
 
 ## Visión General
 Plataforma embarcada para un carro seguidor basado en ESP32 + DW3000 (UWB) que permite:
@@ -80,4 +82,4 @@ ESP-NOW  ───────►  EspNowReceiver │ FollowController    │ �
 - Lógica crítica (safety/follow) sin macros ocultas.
 
 ---
-> Última actualización generada automáticamente.
+> Última actualización generada automáticamente. Para ver la doc renderizada online usar el enlace de GitHub Pages.
