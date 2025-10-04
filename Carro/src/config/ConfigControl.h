@@ -28,9 +28,11 @@ struct ControlTuning {
     float distancia_umbral_max = 10000.0f;
 
     // PID angular base
-    float pid_ang_kp = 0.25f;
+    // En CarroClean (control.cpp) se inicializa pid_init(&pid, 1.2, 0.01, 0.3,...)
+    // Se ignoran los macros de config.h originales (0.25,0.01,0.8). Adoptamos los efectivos.
+    float pid_ang_kp = 1.2f;
     float pid_ang_ki = 0.01f;
-    float pid_ang_kd = 0.8f;
+    float pid_ang_kd = 0.3f;
     float pid_ang_alpha = 0.5f;
     float pid_ang_salida_max = 10.0f;
     float pid_ang_integral_max = 20.0f;

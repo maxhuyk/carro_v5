@@ -53,28 +53,34 @@ void FollowController::actualizar() {
 
     // Distancias base / validación mínima
     float d0 = last_.distancias[0]; float d1 = last_.distancias[1]; float d2 = last_.distancias[2];
-    if (d0 <= 0 || d1 <= 0) {
-        LOG_WARN("AUTO", "Distancias invalidas d0=%.1f d1=%.1f", d0, d1); return; }
+    // Validaciones como en CarroClean (rango y >0)
+    if (isnan(d0) || isnan(d1) || isnan(d2) || d0 <= 0 || d1 <= 0 || d2 <= 0 || d0 > 40000 || d1 > 40000 || d2 > 40000) {
+        LOG_WARN("AUTO", "Dist invalidas d0=%.1f d1=%.1f d2=%.1f", d0, d1, d2);
+        // No se hace pipeline; safety gestionará por timeout si persiste
+        return;
+    }
 
-    // ===== PIPELINE FILTROS =====
-    float dist_crudas[3] = {d0,d1,d2};
-    float dist_mv[3]; media_.actualizar(dist_crudas, dist_mv);
-    float dist_kal[3]; kalman_.filtrar(dist_mv, dist_kal);
-
-    // Limitar variación (anti salto) excepto en recuperación gracia
+    // ===== PIPELINE FILTROS (orden CarroClean) =====
+    // 1. Limitador de variación sobre distancias crudas (si hay previas y no gracia recovery)
+    float dist_work[3] = {d0,d1,d2};
     if (dist_prev_valid_) {
         bool saltar_limitador = false;
         if (in_recovery_) {
             unsigned long elapsed = millis() - recovery_start_ms_;
-            if (elapsed < cfg_.recovery_grace_ms) saltar_limitador = true; else saltar_limitador = false;
+            if (elapsed < cfg_.recovery_grace_ms) saltar_limitador = true;
         }
         if (!saltar_limitador) {
-            float dist_limited[3];
-            utils::limitar_variacion(dist_kal, dist_prev_, dist_limited, 3, in_recovery_ ? cfg_.recovery_delta_pos : cfg_.max_delta_pos);
-            for (int i=0;i<3;i++) dist_kal[i] = dist_limited[i];
+            float dist_lim[3];
+            utils::limitar_variacion(dist_work, dist_prev_, dist_lim, 3, in_recovery_ ? cfg_.recovery_delta_pos : cfg_.max_delta_pos);
+            for(int i=0;i<3;i++) dist_work[i] = dist_lim[i];
         }
     }
-    for(int i=0;i<3;i++) dist_prev_[i]=dist_kal[i]; dist_prev_valid_=true;
+    // 2. Media móvil
+    float dist_mv[3]; media_.actualizar(dist_work, dist_mv);
+    // 3. Kalman
+    float dist_kal[3]; kalman_.filtrar(dist_mv, dist_kal);
+    // Actualizar previas para próximo ciclo
+    for(int i=0;i<3;i++) dist_prev_[i] = dist_work[i]; dist_prev_valid_ = true;
 
     // Trilateración
     // (Por ahora dependemos de posiciones definidas externamente; placeholder simple si alguna distancia <=0)
@@ -91,15 +97,7 @@ void FollowController::actualizar() {
     angulo_prev_ = angulo_rel;
 
     // Distancia promedio frontal (usamos distancias filtradas para control de distancia)
-    float d_front0 = dist_kal[0];
-    float d_front1 = dist_kal[1];
-    // Filtro de asimetría: si una distancia se desvía demasiado de la otra, usar la menor (heurística CarroClean típica)
-    float diff_front = fabsf(d_front0 - d_front1);
-    const float ASIM_MAX = 800.0f; // mm tolerado (ajustable si difiere en original)
-    if (diff_front > ASIM_MAX) {
-        if (d_front0 < d_front1) d_front1 = d_front0; else d_front0 = d_front1;
-    }
-    float distancia = (d_front0 + d_front1) * 0.5f;
+    float distancia = (dist_kal[0] + dist_kal[1]) * 0.5f; // promedio frontal sin filtro extra
 
     // ====================== SEGURIDAD / SIGNAL LOST ======================
     bool early_return = false;
@@ -116,7 +114,7 @@ void FollowController::actualizar() {
     float _ = pid_update(pid_dist_, distancia); // no usamos salida directa, seguimos heurística original
     float error_dist = distancia - cfg_.distancia_objetivo;
     int velocidad_objetivo;
-    if (error_dist > 500) velocidad_objetivo = cfg_.velocidad_maxima;
+    if (error_dist > 5000) velocidad_objetivo = cfg_.velocidad_maxima; // umbral CarroClean
     else if (error_dist > 100) {
         float vp = 20 + (error_dist - 100) * 0.016f;
         if (vp > cfg_.velocidad_maxima) vp = (float)cfg_.velocidad_maxima;
@@ -133,19 +131,21 @@ void FollowController::actualizar() {
 
     if (modo_ != 1) return; // Sólo autopilot en modo 1
 
-    if (v_lineal > 0) {
-        auto dv = calcular_velocidades_diferenciales(v_lineal, correccion, cfg_.velocidad_maxima);
-        motion::MotionCommand mc; mc.left = (int16_t)dv.velL; mc.right = (int16_t)dv.velR; mc.source = motion::MotionCommand::Source::AUTOPILOT;
+    // Diferencial CarroClean: nunca invertir; usa correccion como angulo_relativo
+    auto velDiff = utils::calcular_velocidades_diferenciales((float)v_lineal, correccion, (float)cfg_.velocidad_maxima);
+    int outL = velDiff.vel_izq; int outR = velDiff.vel_der;
+    if (v_lineal > 0 && modo_ == 1) {
+        motion::MotionCommand mc; mc.left = (int16_t)outL; mc.right = (int16_t)outR; mc.source = motion::MotionCommand::Source::AUTOPILOT;
         driver_.aplicar(mc);
-        // actualizar última corrección válida para fallback
-        last_valid_correction_ = correccion;
-        last_valid_distance_ = distancia;
-        LOG_DEBUG("AUTO", "dist=%.0f err=%.0f v=%d corr=%.2f L=%d R=%d", distancia, error_dist, v_lineal, correccion, (int)dv.velL, (int)dv.velR);
-    } else {
-        // velocidad = 0 -> frenar
+        LOG_DEBUG("AUTO", "dist=%.0f err=%.0f v=%d corr=%.2f L=%d R=%d", distancia, error_dist, v_lineal, correccion, outL, outR);
+    } else if (modo_ == 1) {
         motion::MotionCommand mc; mc.left = 0; mc.right = 0; mc.source = motion::MotionCommand::Source::AUTOPILOT;
         driver_.aplicar(mc);
     }
+    // Guardar siempre (aun con velocidad 0) para fallback fiel
+    last_valid_distance_ = distancia;
+    last_valid_correction_ = correccion;
+    last_valid_velocity_ = v_lineal;
 }
 
 void FollowController::manejarSignalLost(float* distancias_filtradas, float distancia_promedio, float correccion, bool& early_return_flag) {
@@ -204,6 +204,11 @@ void FollowController::manejarSignalLost(float* distancias_filtradas, float dist
             pid_ang_.integral = 0; pid_ang_.prev_error = 0; pid_ang_.first = true;
             pid_dist_.integral = 0; pid_dist_.prev_error = 0; pid_dist_.first = true;
             velocidad_actual_ = 0;
+            // Rellenar media móvil con la primera medición (replicar comportamiento CarroClean)
+            media_.init(3, cfg_.media_movil_ventana);
+            float seed[3] = {distancias_filtradas[0], distancias_filtradas[1], distancias_filtradas[2]};
+            float dummy[3];
+            for (int r=0; r<cfg_.media_movil_ventana; ++r) media_.actualizar(seed, dummy);
         }
         if (in_recovery_) {
             recovery_cycles_++;
