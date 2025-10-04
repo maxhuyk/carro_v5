@@ -1,75 +1,83 @@
-# Proyecto Carro Autónomo con ESP32 y UWB
+<!-- README principal se sincroniza con docs/index.md -->
 
-Este proyecto contiene el código para un sistema de carrito autónomo que utiliza tecnología Ultra-Wideband (UWB) para posicionamiento y navegación.
 
-## Estructura del Proyecto
 
-- **Carro/**: Código para el ESP32 del carrito (receptor/controlador principal)
-- **TAG/**: Código para el ESP32 del tag/beacon (transmisor de posición)  
-- **raspberry/**: Código Python para la Raspberry Pi (procesamiento y control)
+# Carro – Documentación Técnica
 
-## Cómo cargar el código en los ESP32
+ [Documentación HTML](docs/build/html/index.html)
 
-### Requisitos previos
-- **PlatformIO IDE** (extensión de VS Code) o **PlatformIO Core**
-- **Cable USB** para conectar el ESP32
-- **Drivers USB-Serial** para tu ESP32 instalados
+## Visión General
+Plataforma embarcada para un carro seguidor basado en ESP32 + DW3000 (UWB) que permite:
+- Ranging UWB multi‑anchor (3 anchors) con recuperación de fallos.
+- Control de seguimiento (autopilot) con filtrado (media móvil + Kalman) y heurística de velocidad.
+- Control manual diferencial vía ESP‑NOW.
+- Seguridad (signal lost, fallback, recovery Kalman, deadzone motores, timeouts).
+- Arquitectura modular (módulos registrables) con logging unificado y niveles.
 
-### Pasos para cargar el proyecto:
-
-1. **Conecta tu ESP32** al puerto USB de tu computadora
-
-2. **Identifica el puerto COM**:
-   - **Windows**: Abre el Administrador de dispositivos  Puertos (COM y LPT) 
-   - Anota el número del puerto (ej: COM3, COM4, etc.)
-   - **Linux/Mac**: Ejecuta `ls /dev/tty*` en terminal
-
-3. **Configura el puerto en PlatformIO**:
-   - Abre el archivo `platformio.ini` en la carpeta correspondiente (Carro/ o TAG/)
-   - Busca la línea que dice `upload_port = ` 
-   - **Modifica el puerto COM** al correcto:
-     ```ini
-     upload_port = COM3    ; Cambia COM3 por tu puerto
-     monitor_port = COM3   ; Cambia COM3 por tu puerto
-     ```
-
-4. **Compila y sube el código**:
-   - Abre VS Code en la carpeta del proyecto (Carro/ o TAG/)
-   - Presiona `Ctrl+Shift+P`  "PlatformIO: Upload"
-   - O usa el botón "Upload" en la barra inferior de VS Code
-   - O en terminal: `pio run --target upload`
-
-### Configuración típica platformio.ini:
-
-```ini
-[env:esp32dev]
-platform = espressif32
-board = esp32dev
-framework = arduino
-upload_port = COM3        ;  CAMBIAR AQUÍ
-monitor_port = COM3       ;  CAMBIAR AQUÍ  
-monitor_speed = 115200
-lib_deps = 
-    SPI
-    Wire
+## Arquitectura de Alto Nivel
+```text
+┌─────────────┐    UWB (Core0)       ┌────────────────────┐
+│ Anchors DW  │ ───────────────────► │ UWBCore (tarea RT) │
+└─────┬───────┘                      └───────┬────────────┘
+      │ cm                                   │ mm (pushMeasurement)
+      ▼                                      ▼
+                                  ┌────────────────────┐
+ESP-NOW  ───────►  EspNowReceiver │ FollowController    │ ──► DriverMotores ─► PWM
+(control manual)                  │  (filtros, PID ang) │
+                                  └─────────┬──────────┘
+                                            │ logs
+                                      Logger / SPIFFS
 ```
 
-### Problemas comunes:
+## Módulos Clave
+| Módulo | Propósito | Archivo principal |
+|--------|-----------|-------------------|
+| core::GestorSistema | Ciclo de vida (iniciar/actualizar) | `core/GestorSistema.*` |
+| monitoreo::Logger | Logging niveles + archivo | `monitoreo/LoggerReinicios.*` |
+| uwb::UWBCore | Tarea ranging DW3000 multi‑anchor | `uwb/UWBCore.*` |
+| control::FollowController | Autopilot (filtros, PID angular, safety) | `control/autopilot/FollowController.*` |
+| control::ControlManual | Normaliza joystick y aplica diferencial | `control/manual/ControlManual.*` |
+| motion::DriverMotores | Deadzone, mapping PWM, safety timeout | `motion/DriverMotores.*` |
+| utils::* | Filtros (media, Kalman), trilateración, helpers | `utils/Filtros.h` |
 
-- **"Port not found"**: Verifica que el ESP32 esté conectado y el puerto COM sea correcto
-- **"Permission denied"**: En Linux, agrega tu usuario al grupo dialout: `sudo usermod -a -G dialout $USER`
-- **Error de compilación**: Asegúrate de tener las librerías necesarias instaladas
+## Flujo de Control (Autopilot)
+1. `UWBCore` obtiene distancias (cm) y las publica.
+2. `FollowController::pushMeasurement()` recibe (mm) y guarda timestamp.
+3. En cada ciclo `FollowController::actualizar()`:
+   - Valida distancias / limitador variación.
+   - Media móvil + Kalman.
+   - Trilateración -> posición -> ángulo relativo.
+   - PID angular si supera umbral dinámico.
+   - Heurística de velocidad por error de distancia.
+   - Diferencial (sin invertir ruedas) y aplicación a motores (modo 1).
+   - Safety: fallback si señal perdida.
 
-### Monitorear la salida serial:
-```bash
-pio device monitor --port COM3 --baud 115200
-```
+## Modos de Operación
+| Modo | Descripción |
+|------|-------------|
+| 0 | Stop / pausa (pipeline corre, no mueve) |
+| 1 | Autopilot (follow activo) |
+| 3 | Manual (usa joystick, follow no envía PWM) |
 
-## Uso del sistema:
+## Seguridad
+- Timeout señal UWB (>1s): fallback velocidad reducida + última corrección hasta `timeout_fallback_s`.
+- Distancia menor a `distancia_fallback`: stop inmediato.
+- Recovery Kalman: `Q` temporal alta, `P_init` grande, reseed media.
+- Motores: timeout de comandos → stop + enable LOW.
 
-1. Carga el código del **TAG** en un ESP32
-2. Carga el código del **Carro** en otro ESP32  
-3. Ejecuta el código de **raspberry** en la Raspberry Pi
-4. El sistema iniciará automáticamente la comunicación UWB y el control del carro
+## Parámetros Relevantes (extracto)
+| Parámetro | Valor defecto | Archivo |
+|-----------|---------------|---------|
+| PID angular (Kp,Ki,Kd) | 1.2,0.01,0.3 | `ConfigControl.h` |
+| Distancia objetivo | 1500 mm | `ConfigControl.h` |
+| Velocidad máxima | 75 | `ConfigControl.h` |
+| Deadzone motores | 60% | `ConfigMotores.h` |
+| Joystick deadzone | 200 (crudo) | `ConfigPerfil.h` |
+| Recovery Q temp | 1.0 | `ConfigControl.h` |
 
-Listo para navegar! 
+## Estilo de Código
+- Comentarios concisos, preferencia por funciones puras en utilidades.
+- Lógica crítica (safety/follow) sin macros ocultas.
+
+---
+> Última actualización generada automáticamente.
