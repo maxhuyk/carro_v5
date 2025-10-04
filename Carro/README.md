@@ -1,6 +1,6 @@
 <!-- README principal se sincroniza con docs/index.md -->
 
-> Este README es una copia sincronizada de `docs/index.md`. Si editas aquí, replica el cambio en `docs/index.md`.
+
 
 # Carro – Documentación Técnica
 
