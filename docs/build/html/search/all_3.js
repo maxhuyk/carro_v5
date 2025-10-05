@@ -1,0 +1,23 @@
+var searchData=
+[
+  ['d1_0',['d1',['../structuwb_1_1_u_w_b_raw_data.html#a5cb6bf98b89b23e378ceaf4d45924a78',1,'uwb::UWBRawData']]],
+  ['d2_1',['d2',['../structuwb_1_1_u_w_b_raw_data.html#a701e4f9dc46833acf7c19a2090d2969a',1,'uwb::UWBRawData']]],
+  ['d3_2',['d3',['../structuwb_1_1_u_w_b_raw_data.html#a54f93a7700a2a5fb562baa9423efb2c3',1,'uwb::UWBRawData']]],
+  ['deadzone_5fpercent_3',['deadzone_percent',['../structconfig_1_1_motor_config.html#a761b7e305f16989d40b1a04de85764ba',1,'config::MotorConfig']]],
+  ['debe_5fcorregir_4',['debe_corregir',['../namespaceutils.html#a305c150e48d18908ca4febc0ccb545fe',1,'utils']]],
+  ['debug_5',['DEBUG',['../namespaceconfig.html#a5501a7c679b5dc3d68b275591b5fa0cfadc30ec20708ef7b0f641ef78b7880a15',1,'config']]],
+  ['desaceleracion_5fmax_6',['desaceleracion_max',['../structconfig_1_1_control_tuning.html#acfc532a9ee40d0904fffab951fafd618',1,'config::ControlTuning']]],
+  ['desenrollar_5fangulo_7',['desenrollar_angulo',['../namespaceutils.html#a79e81f71978e211eda52ceacf8b8aa94',1,'utils']]],
+  ['deshabilitado_8',['DESHABILITADO',['../namespaceconfig.html#aae4ae09b4cb01b39589d9ae09aefdedaae24566619fab3a61f6e81ccbe3be036e',1,'config']]],
+  ['detener_9',['detener',['../classcomms_1_1_esp_now_receiver.html#ad1d811432cbbdf24abb66d5089ab5742',1,'comms::EspNowReceiver::detener()'],['../classcore_1_1_gestor_sistema.html#ad2ad300be664171568e72b345cf59cef',1,'core::GestorSistema::detener()'],['../classcore_1_1_modulo.html#a1718a7852569023a864f75c8d15521ee',1,'core::Modulo::detener()'],['../classmotion_1_1_driver_motores.html#a5f36f5a4906339ab7dd7c9dcc2cac849',1,'motion::DriverMotores::detener()'],['../classuwb_1_1_u_w_b_core.html#aaa4d007b14a214a36099854384f639da',1,'uwb::UWBCore::detener()']]],
+  ['diffvel_10',['DiffVel',['../structcontrol_1_1_diff_vel.html',1,'control']]],
+  ['distancia_5ffallback_11',['distancia_fallback',['../structconfig_1_1_control_tuning.html#ac6304a69c22eb1e4b39acfcc5d48ae05',1,'config::ControlTuning']]],
+  ['distancia_5fobjetivo_12',['distancia_objetivo',['../structconfig_1_1_control_tuning.html#afee4c0c4c40a2186e091f2079e8a77d7',1,'config::ControlTuning']]],
+  ['distancia_5fumbral_5fmax_13',['distancia_umbral_max',['../structconfig_1_1_control_tuning.html#a94e9d21915b27be4304c503dfe6a4f52',1,'config::ControlTuning']]],
+  ['distancia_5fumbral_5fmin_14',['distancia_umbral_min',['../structconfig_1_1_control_tuning.html#a12e6b4915adb4721a7cb475503e2d005',1,'config::ControlTuning']]],
+  ['distancias_15',['distancias',['../structcontrol_1_1_measurement.html#a6c27318e000d840f58e9dbea853b370d',1,'control::Measurement']]],
+  ['drivermotores_16',['DriverMotores',['../classmotion_1_1_driver_motores.html',1,'motion::DriverMotores'],['../classmotion_1_1_driver_motores.html#a30fd8cb7369140dc1b757dfec555a6ce',1,'motion::DriverMotores::DriverMotores()']]],
+  ['drivermotores_2ecpp_17',['DriverMotores.cpp',['../_driver_motores_8cpp.html',1,'']]],
+  ['drivermotores_2eh_18',['DriverMotores.h',['../_driver_motores_8h.html',1,'']]],
+  ['duracion_5finit_5fms_19',['duracion_init_ms',['../structmonitoreo_1_1_entrada_reinicio.html#a4e2e7e3d68c91370369f7cc8215be450',1,'monitoreo::EntradaReinicio']]]
+];

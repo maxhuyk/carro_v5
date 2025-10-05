@@ -1,0 +1,11 @@
+var classcontrol_1_1_logger =
+[
+    [ "getNivelMinimo", "classcontrol_1_1_logger.html#a1ada50663050f250cfa31ec5df7c6809", null ],
+    [ "iniciar", "classcontrol_1_1_logger.html#a17f063f438bd6ce3d47b17575d2f796e", null ],
+    [ "instancia", "classcontrol_1_1_logger.html#a4114c16b534c7265c33b36c30331d369", null ],
+    [ "log", "classcontrol_1_1_logger.html#a9551b222a23fc9463613f4faf3a4a703", null ],
+    [ "logf", "classcontrol_1_1_logger.html#a8bbe7ac428ba243439aaae8d6476b152", null ],
+    [ "registrarBoot", "classcontrol_1_1_logger.html#aae385036ba304d4b7a26e53ca6c04df4", null ],
+    [ "setNivelMinimo", "classcontrol_1_1_logger.html#a767448f7157222db6f48338dab88603c", null ],
+    [ "volcarEstado", "classcontrol_1_1_logger.html#a95816e7f198cf38fd0f5371a415a7980", null ]
+];

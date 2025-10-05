@@ -1,0 +1,29 @@
+/* Minimal subset of doxygen-awesome.css (abridged) */
+:root {
+  --main-bg-color: #0f1115;
+  --main-fg-color: #e6e6e6;
+  --accent-color: #3fa9f5;
+  --link-color: #62b5ff;
+  --code-bg: #1b1f27;
+  --table-bg: #161a20;
+}
+body { background: var(--main-bg-color); color: var(--main-fg-color); font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; }
+a { color: var(--link-color); }
+a:visited { color: #9ecbff; }
+.navpath { background: #14181e; }
+#nav-tree { background: #14181e; }
+.fragment { background: var(--code-bg); border: 1px solid #2c313a; }
+.memproto { background: #18202a; border: 1px solid #2b313a; }
+.memdoc { background: #161d26; border: 1px solid #2b313a; }
+.searchresults { background: #14181e; }
+.directory tr.even { background: #181d23; }
+.directory tr.odd { background: #14181e; }
+.title { color: var(--accent-color); }
+.summary { color: #9fb3c8; }
+hr { border-color: #2c313a; }
+.code, code, pre { background: var(--code-bg); color: #dcdcdc; }
+/* Scrollbars (webkit) */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #111418; }
+::-webkit-scrollbar-thumb { background: #2c323b; }
+::-webkit-scrollbar-thumb:hover { background: #3a424d; }

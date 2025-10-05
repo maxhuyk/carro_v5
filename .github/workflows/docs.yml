@@ -1,0 +1,50 @@
+name: Build & Publish Doxygen Docs (GitHub Pages)
+
+on:
+  push:
+    branches: [ modularizacion ]
+    paths:
+      - '**.h'
+      - '**.cpp'
+      - 'docs/**'
+  workflow_dispatch:
+
+# Necesitamos permisos especiales para Pages (nuevo flujo oficial)
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar Doxygen + Graphviz
+        run: sudo apt-get update && sudo apt-get install -y doxygen graphviz
+
+      - name: Generar documentación
+        working-directory: docs
+        run: doxygen Doxyfile
+
+      - name: Subir artefacto para Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/build/html
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy a GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
