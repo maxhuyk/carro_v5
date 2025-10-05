@@ -4,9 +4,8 @@
 
 # Carro – Documentación Técnica
 
- [Documentación HTML local](docs/build/html/index.html)
 
- [Documentación publicada (GitHub Pages)](https://maxhuyk.github.io/carro/) *(se actualiza tras cada push a `modularizacion`)*
+ [Documentación](https://maxhuyk.github.io/carro_v5/) 
 
 ## Visión General
 Plataforma embarcada para un carro seguidor basado en ESP32 + DW3000 (UWB) que permite:
