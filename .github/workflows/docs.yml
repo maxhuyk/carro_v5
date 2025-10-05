@@ -30,13 +30,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y doxygen graphviz
 
       - name: Generar documentación
-        working-directory: docs
+        working-directory: carro/docs
         run: doxygen Doxyfile
 
       - name: Subir artefacto para Pages
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/build/html
+          path: carro/docs/build/html
 
   deploy:
     needs: build

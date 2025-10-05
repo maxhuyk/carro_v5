@@ -1,0 +1,15 @@
+# Normalize line endings
+* text=auto eol=lf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.bin binary
+
+# Windows scripts (retain CRLF)
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
