@@ -1,85 +1,77 @@
-<!-- README principal se sincroniza con docs/index.md -->
+# Proyecto Carro (Esqueleto Modular)
 
+Este es un esqueleto limpio para reconstruir el sistema mediante módulos desacoplados.
 
+## Filosofía
+Cada módulo implementa 3 fases bien definidas:
 
-# Carro – Documentación Técnica
+1. `configure()`  -> Cargar/derivar parámetros (no tocar hardware).
+2. `setup()`      -> Reservar recursos / inicializar hardware. Devuelve `bool`.
+3. `loop()`       -> Lógica periódica rápida (sin bloqueos largos).
 
- [Documentación HTML local](docs/build/html/index.html)
+Características clave incluidas:
+- Activación/desactivación por módulo (en memoria).
+- Orden de inicialización determinista con soporte de dependencias.
+- Métricas básicas (tiempo de setup y loop acumulado) para diagnóstico.
+- Registro central de módulos (`ModuleManager`).
+- Macro de registro para reducir repetición.
 
- [Documentación publicada (GitHub Pages)](https://maxhuyk.github.io/carro/) *(se actualiza tras cada push a `modularizacion`)*
-
-## Visión General
-Plataforma embarcada para un carro seguidor basado en ESP32 + DW3000 (UWB) que permite:
-- Ranging UWB multi‑anchor (3 anchors) con recuperación de fallos.
-- Control de seguimiento (autopilot) con filtrado (media móvil + Kalman) y heurística de velocidad.
-- Control manual diferencial vía ESP‑NOW.
-- Seguridad (signal lost, fallback, recovery Kalman, deadzone motores, timeouts).
-- Arquitectura modular (módulos registrables) con logging unificado y niveles.
-
-## Arquitectura de Alto Nivel
-```text
-┌─────────────┐    UWB (Core0)       ┌────────────────────┐
-│ Anchors DW  │ ───────────────────► │ UWBCore (tarea RT) │
-└─────┬───────┘                      └───────┬────────────┘
-      │ cm                                   │ mm (pushMeasurement)
-      ▼                                      ▼
-                                  ┌────────────────────┐
-ESP-NOW  ───────►  EspNowReceiver │ FollowController    │ ──► DriverMotores ─► PWM
-(control manual)                  │  (filtros, PID ang) │
-                                  └─────────┬──────────┘
-                                            │ logs
-                                      Logger / SPIFFS
+## Estructura
+```
+src/
+  core/
+    Module.h            (clase base)
+    ModuleManager.h/.cpp
+    ConfigStore.h/.cpp  (stub para futura carga persistente)
+    Log.h               (logging mínimo)
+  modules/
+    Module_EspNow.*     (stub)
+    Module_Motor.*      (stub)
+    Module_Emergency.*  (stub)
+    Module_Uwb.*        (placeholder)
+    Module_Control.*    (stub control de alto nivel)
+  main.cpp
 ```
 
-## Módulos Clave
-| Módulo | Propósito | Archivo principal |
-|--------|-----------|-------------------|
-| core::GestorSistema | Ciclo de vida (iniciar/actualizar) | `core/GestorSistema.*` |
-| monitoreo::Logger | Logging niveles + archivo | `monitoreo/LoggerReinicios.*` |
-| uwb::UWBCore | Tarea ranging DW3000 multi‑anchor | `uwb/UWBCore.*` |
-| control::FollowController | Autopilot (filtros, PID angular, safety) | `control/autopilot/FollowController.*` |
-| control::ControlManual | Normaliza joystick y aplica diferencial | `control/manual/ControlManual.*` |
-| motion::DriverMotores | Deadzone, mapping PWM, safety timeout | `motion/DriverMotores.*` |
-| utils::* | Filtros (media, Kalman), trilateración, helpers | `utils/Filtros.h` |
+## Flujo de arranque
+1. Registrar todos los módulos.
+2. Aplicar configuración (enable/disable).
+3. `configureAll()`
+4. `setupAll()` (respeta dependencias y marca fallos sin abortar el resto).
+5. Bucle principal llama `loopAll()`.
 
-## Flujo de Control (Autopilot)
-1. `UWBCore` obtiene distancias (cm) y las publica.
-2. `FollowController::pushMeasurement()` recibe (mm) y guarda timestamp.
-3. En cada ciclo `FollowController::actualizar()`:
-   - Valida distancias / limitador variación.
-   - Media móvil + Kalman.
-   - Trilateración -> posición -> ángulo relativo.
-   - PID angular si supera umbral dinámico.
-   - Heurística de velocidad por error de distancia.
-   - Diferencial (sin invertir ruedas) y aplicación a motores (modo 1).
-   - Safety: fallback si señal perdida.
+## Dependencias
+Al registrar un módulo se puede declarar la lista de nombres de los módulos de los cuales depende. Si alguno falla en `setup()`, el dependiente queda deshabilitado automáticamente.
 
-## Modos de Operación
-| Modo | Descripción |
-|------|-------------|
-| 0 | Stop / pausa (pipeline corre, no mueve) |
-| 1 | Autopilot (follow activo) |
-| 3 | Manual (usa joystick, follow no envía PWM) |
+## Extender con un módulo nuevo
+```cpp
+class Module_MiSensor : public Module {
+public:
+  Module_MiSensor(): Module("MiSensor", {"Motor"}) {}
+  void configure() override { sampleIntervalMs_ = 50; }
+  bool setup() override { lastMs_ = millis(); return true; }
+  void loop() override {
+    if (millis()-lastMs_ >= sampleIntervalMs_) { lastMs_=millis(); /* leer sensor */ }
+  }
+private:
+  uint32_t lastMs_ = 0; uint32_t sampleIntervalMs_ = 50;
+};
+REGISTER_MODULE(Module_MiSensor);
+```
 
-## Seguridad
-- Timeout señal UWB (>1s): fallback velocidad reducida + última corrección hasta `timeout_fallback_s`.
-- Distancia menor a `distancia_fallback`: stop inmediato.
-- Recovery Kalman: `Q` temporal alta, `P_init` grande, reseed media.
-- Motores: timeout de comandos → stop + enable LOW.
+## Sugerencias robustas
+1. **No bloquear en loop()**: usar lapsos cortos y `millis()`.
+2. **Instrumentar latencias**: revisar `ModuleManager::dumpStatus()` serial cada X segundos.
+3. **Fallbacks**: si un módulo crítico falla en `setup()`, dejar constancia y seguir (no reset total).
+4. **Config layering**: futuro: capas (defaults, archivo, OTA) → aplicar antes de `configureAll()`.
+5. **Hot-disable**: puedes llamar `manager.disableModule("Uwb")` en runtime si se detecta error recurrente.
+6. **Watchdog interno**: usar contador de ciclos sin eventos dentro de módulos para auto-recuperación.
+7. **Separar ISR**: cualquier interrupción debe poner flags y el procesamiento pesado en loop().
 
-## Parámetros Relevantes (extracto)
-| Parámetro | Valor defecto | Archivo |
-|-----------|---------------|---------|
-| PID angular (Kp,Ki,Kd) | 1.2,0.01,0.3 | `ConfigControl.h` |
-| Distancia objetivo | 1500 mm | `ConfigControl.h` |
-| Velocidad máxima | 75 | `ConfigControl.h` |
-| Deadzone motores | 60% | `ConfigMotores.h` |
-| Joystick deadzone | 200 (crudo) | `ConfigPerfil.h` |
-| Recovery Q temp | 1.0 | `ConfigControl.h` |
-
-## Estilo de Código
-- Comentarios concisos, preferencia por funciones puras en utilidades.
-- Lógica crítica (safety/follow) sin macros ocultas.
+## Próximos pasos recomendados
+1. Implementar logger configurable (niveles + sink serial / archivo).
+2. Añadir JSON simple (ArduinoJson) en `ConfigStore` para persistir.
+3. Reintroducir lógica real de cada subsistema incrementalmente (motores, esp-now, emergencia, UWB).
 
 ---
-> Última actualización generada automáticamente. Para ver la doc renderizada online usar el enlace de GitHub Pages.
+Este esqueleto está listo para ampliarse sin arrastrar la complejidad previa.
