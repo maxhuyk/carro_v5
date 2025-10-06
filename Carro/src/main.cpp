@@ -42,6 +42,7 @@ void setup(){
   LOGI("BOOT","Esqueleto modular inicializando");
   applyConfig();
   enableFromConfig();
+  // Periodos antiguos omitidos: Control y UWB ahora son event-driven via tasks multicore.
   // Fases
   ModuleManager::instance().configureAll();
   ModuleManager::instance().setupAll();
