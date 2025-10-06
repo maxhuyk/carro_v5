@@ -1,6 +1,7 @@
 #include "UWBCore.h"
 #include "DW3000.h"
-#include "core/UwbPipeline.h"
+// #include "core/UwbPipeline.h" // (comentado: pipeline desactivado temporalmente)
+#include "core/Log.h" // para usar LOGD() en lugar de verbose específico
 #include <Arduino.h>
 #include <math.h>
 
@@ -32,8 +33,8 @@ static TaskHandle_t uwbTaskHandle = NULL;
 static uint16_t failCountA1 = 0;
 static uint16_t failCountA2 = 0;
 static uint16_t failCountA3 = 0;
-static bool g_verboseUwb = false; // toggle de logs detallados
-static unsigned long g_lastVerbosePrint = 0;
+// static bool g_verboseUwb = false; // toggle de logs detallados (desactivado)
+// static unsigned long g_lastVerbosePrint = 0;
 
 struct AnchorState {
     uint16_t consecTimeouts = 0;
@@ -111,11 +112,14 @@ void UWBCore_task(void* parameter){
             g_uwb_raw_data.valid1=v1; g_uwb_raw_data.valid2=v2; g_uwb_raw_data.valid3=v3; g_uwb_raw_data.timestamp=nowMs;
             g_uwb_data_ready=true; g_uwb_measurement_count++; g_uwb_last_measurement_time=nowMs; xSemaphoreGive(uwbSemaphore);
         }
-        // Integración con pipeline: publicar medición combinada sólo si al menos un anchor válido (mantener literal, añadir publish condicional)
-        if(v1||v2||v3){ static uint32_t seq=0; UwbMeasurement m; m.seq=++seq; m.t_ms=nowMs; m.t_us=micros(); m.valid=(v1||v2||v3); m.d[0]=d1; m.d[1]=d2; m.d[2]=d3; UwbPipeline::publish(m); }
-        if(g_verboseUwb && (millis()-g_lastVerbosePrint)>1000){
-            g_lastVerbosePrint = millis();
-            Serial.printf("[UWB][dbg] d1=%.1f v1=%d d2=%.1f v2=%d d3=%.1f v3=%d meas=%lu\n", d1,v1,d2,v2,d3,v3,g_uwb_measurement_count);
+        // (pipeline desactivado: publicación removida temporalmente)
+        // Log periódico usando sistema estándar (respeta log.level global)
+        static unsigned long lastDebugPrint = 0;
+        if((millis() - lastDebugPrint) > 1000){
+            lastDebugPrint = millis();
+            if(g_uwb_measurement_count % 10 == 0) { // cada 10 mediciones para no saturar
+                LOGI("UWB","d1=%.1f v1=%d d2=%.1f v2=%d d3=%.1f v3=%d meas=%lu", d1,v1,d2,v2,d3,v3,g_uwb_measurement_count);
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(cycle_delay_ms));
     }
@@ -154,16 +158,7 @@ void UWBCore_getDistances(float distances[NUM_ANCHORS]){ for(int i=0;i<NUM_ANCHO
 void UWBCore_getAnchorStatus(bool status[NUM_ANCHORS]){ for(int i=0;i<NUM_ANCHORS;i++) status[i]=g_anchor_status[i]; }
 unsigned long UWBCore_getMeasurementCount(){ unsigned long c=0; if(xSemaphoreTake(uwbSemaphore,pdMS_TO_TICKS(10))==pdTRUE){ c=g_uwb_measurement_count; xSemaphoreGive(uwbSemaphore);} return c; }
 
-bool UWBCore_snapshot(UWBRawData& out){
-    bool ok=false;
-    if(xSemaphoreTake(uwbSemaphore,pdMS_TO_TICKS(5))==pdTRUE){
-        out.distance1=g_uwb_raw_data.distance1; out.distance2=g_uwb_raw_data.distance2; out.distance3=g_uwb_raw_data.distance3;
-        out.valid1=g_uwb_raw_data.valid1; out.valid2=g_uwb_raw_data.valid2; out.valid3=g_uwb_raw_data.valid3; out.timestamp=g_uwb_raw_data.timestamp; ok=true;
-        xSemaphoreGive(uwbSemaphore);
-    }
-    return ok;
-}
-
-// Helpers para togglear verbose desde consola
-void UWBCore_setVerbose(bool v){ g_verboseUwb = v; }
-bool UWBCore_getVerbose(){ return g_verboseUwb; }
+// Snapshot / verbose (comentado mientras pipeline está desactivado)
+// bool UWBCore_snapshot(UWBRawData& out) { return false; }
+// void UWBCore_setVerbose(bool v){}
+// bool UWBCore_getVerbose(){ return false; }

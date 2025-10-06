@@ -13,17 +13,18 @@
 
 void applyConfig(){
   auto& cfg = ConfigStore::instance();
-  // Ejemplos de llaves (en futuro cargar desde JSON / SPIFFS)
-  cfg.set("enable.Uwb", "false");
+  cfg.set("enable.Uwb", "true"); // habilitar UWB para que arranque la tarea
   cfg.set("enable.Control", "true");
   cfg.set("enable.EspNow", "true");
   cfg.set("enable.Motor", "true");
   cfg.set("enable.Emergency", "true");
+  // Nivel de log global (debug para ver detalles UWB y otros módulos)
+  cfg.set("log.level", "debug");
 }
 
 void enableFromConfig(){
   auto& cfg = ConfigStore::instance();
-  // Lista de módulos conocidos (si agregas más, extiende este arreglo):
+  // Lista de módulos (si se agregan más, hay que extender este arreglo):
   const char* names[] = {"Uwb","Control","EspNow","Motor","Emergency"};
   for(auto name: names){
     String key = String("enable.") + name;
@@ -46,9 +47,6 @@ static void applyRuntimeConfig(){
     if(lvl=="trace") lc.minLevel=LogLevel::TRACE; else if(lvl=="debug") lc.minLevel=LogLevel::DEBUG; else if(lvl=="warn") lc.minLevel=LogLevel::WARN; else if(lvl=="error") lc.minLevel=LogLevel::ERROR; else lc.minLevel=LogLevel::INFO;
     LoggerMini::instance().configure(lc);
   }
-  // Verbose UWB: uwb.verbose = true/false
-  bool uwbV = cfg.getBool("uwb.verbose", false);
-  UWBCore_setVerbose(uwbV);
 }
 
 void setup(){

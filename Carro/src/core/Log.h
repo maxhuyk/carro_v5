@@ -17,6 +17,8 @@ public:
   }
 private: LogConfig cfg_{}; };
 
+#define LOGT(tag, fmt, ...) LoggerMini::instance().logf(LogLevel::TRACE, tag, fmt, ##__VA_ARGS__)
+#define LOGD(tag, fmt, ...) LoggerMini::instance().logf(LogLevel::DEBUG, tag, fmt, ##__VA_ARGS__)
 #define LOGI(tag, fmt, ...) LoggerMini::instance().logf(LogLevel::INFO, tag, fmt, ##__VA_ARGS__)
 #define LOGW(tag, fmt, ...) LoggerMini::instance().logf(LogLevel::WARN, tag, fmt, ##__VA_ARGS__)
 #define LOGE(tag, fmt, ...) LoggerMini::instance().logf(LogLevel::ERROR, tag, fmt, ##__VA_ARGS__)
