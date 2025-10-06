@@ -27,8 +27,12 @@ void UWBCore_task(void* parameter);
 bool UWBCore_getRawData(UWBRawData& data);
 void UWBCore_startTask();
 unsigned long UWBCore_getMeasurementCount();
+// Snapshot no-consumidora (no altera g_uwb_data_ready)
+bool UWBCore_snapshot(UWBRawData& out);
 
 // Adaptation helpers to emit pipeline events (Option B integration)
 bool UWBCore_update(); // original function kept as-is
 void UWBCore_getDistances(float distances[NUM_ANCHORS]);
 void UWBCore_getAnchorStatus(bool status[NUM_ANCHORS]);
+void UWBCore_setVerbose(bool v);
+bool UWBCore_getVerbose();

@@ -32,6 +32,8 @@ static TaskHandle_t uwbTaskHandle = NULL;
 static uint16_t failCountA1 = 0;
 static uint16_t failCountA2 = 0;
 static uint16_t failCountA3 = 0;
+static bool g_verboseUwb = false; // toggle de logs detallados
+static unsigned long g_lastVerbosePrint = 0;
 
 struct AnchorState {
     uint16_t consecTimeouts = 0;
@@ -111,6 +113,10 @@ void UWBCore_task(void* parameter){
         }
         // Integración con pipeline: publicar medición combinada sólo si al menos un anchor válido (mantener literal, añadir publish condicional)
         if(v1||v2||v3){ static uint32_t seq=0; UwbMeasurement m; m.seq=++seq; m.t_ms=nowMs; m.t_us=micros(); m.valid=(v1||v2||v3); m.d[0]=d1; m.d[1]=d2; m.d[2]=d3; UwbPipeline::publish(m); }
+        if(g_verboseUwb && (millis()-g_lastVerbosePrint)>1000){
+            g_lastVerbosePrint = millis();
+            Serial.printf("[UWB][dbg] d1=%.1f v1=%d d2=%.1f v2=%d d3=%.1f v3=%d meas=%lu\n", d1,v1,d2,v2,d3,v3,g_uwb_measurement_count);
+        }
         vTaskDelay(pdMS_TO_TICKS(cycle_delay_ms));
     }
 }
@@ -120,10 +126,24 @@ void UWBCore_startTask(){
     if(xTaskCreatePinnedToCore(UWBCore_task, "UWB_Core_Task", 4096, nullptr, 3, &uwbTaskHandle, 0)!=pdPASS){ Serial.println("[UWBCore] ERROR creando tarea UWB"); }
 }
 
-bool UWBCore_getRawData(UWBRawData& data){
+bool UWBCore_getRawData(UWBRawData& out){
+    bool had = false;
     if(xSemaphoreTake(uwbSemaphore,pdMS_TO_TICKS(10))==pdTRUE){
-        data = g_uwb_raw_data; bool had = g_uwb_data_ready; if(g_uwb_data_ready) g_uwb_data_ready=false; xSemaphoreGive(uwbSemaphore); return had; }
-    return false;
+        // Copia atómica campo a campo desde volatile
+        float d1 = g_uwb_raw_data.distance1;
+        float d2 = g_uwb_raw_data.distance2;
+        float d3 = g_uwb_raw_data.distance3;
+        bool  v1 = g_uwb_raw_data.valid1;
+        bool  v2 = g_uwb_raw_data.valid2;
+        bool  v3 = g_uwb_raw_data.valid3;
+        unsigned long ts = g_uwb_raw_data.timestamp;
+        out.distance1 = d1; out.distance2 = d2; out.distance3 = d3;
+        out.valid1 = v1; out.valid2 = v2; out.valid3 = v3; out.timestamp = ts;
+        had = g_uwb_data_ready;
+        if(g_uwb_data_ready) g_uwb_data_ready=false;
+        xSemaphoreGive(uwbSemaphore);
+    }
+    return had;
 }
 
 bool UWBCore_update(){ UWBRawData raw; UWBCore_getRawData(raw); // mantiene interfaz
@@ -133,3 +153,17 @@ bool UWBCore_update(){ UWBRawData raw; UWBCore_getRawData(raw); // mantiene inte
 void UWBCore_getDistances(float distances[NUM_ANCHORS]){ for(int i=0;i<NUM_ANCHORS;i++) distances[i]=g_distances[i]; }
 void UWBCore_getAnchorStatus(bool status[NUM_ANCHORS]){ for(int i=0;i<NUM_ANCHORS;i++) status[i]=g_anchor_status[i]; }
 unsigned long UWBCore_getMeasurementCount(){ unsigned long c=0; if(xSemaphoreTake(uwbSemaphore,pdMS_TO_TICKS(10))==pdTRUE){ c=g_uwb_measurement_count; xSemaphoreGive(uwbSemaphore);} return c; }
+
+bool UWBCore_snapshot(UWBRawData& out){
+    bool ok=false;
+    if(xSemaphoreTake(uwbSemaphore,pdMS_TO_TICKS(5))==pdTRUE){
+        out.distance1=g_uwb_raw_data.distance1; out.distance2=g_uwb_raw_data.distance2; out.distance3=g_uwb_raw_data.distance3;
+        out.valid1=g_uwb_raw_data.valid1; out.valid2=g_uwb_raw_data.valid2; out.valid3=g_uwb_raw_data.valid3; out.timestamp=g_uwb_raw_data.timestamp; ok=true;
+        xSemaphoreGive(uwbSemaphore);
+    }
+    return ok;
+}
+
+// Helpers para togglear verbose desde consola
+void UWBCore_setVerbose(bool v){ g_verboseUwb = v; }
+bool UWBCore_getVerbose(){ return g_verboseUwb; }
