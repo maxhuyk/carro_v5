@@ -15,6 +15,13 @@ public:
   void setEnabled(bool e) { enabled_ = e; }
   const std::vector<const char*>& deps() const { return deps_; }
   bool failedSetup() const { return failedSetup_; }
+  // Configuración runtime de timing
+  void setPeriodMs(uint32_t p){ periodMs_=p; }
+  void setLoopBudgetUs(uint32_t b){ budgetUs_=b; }
+  uint32_t periodMs() const { return periodMs_; }
+  uint32_t loopBudgetUs() const { return budgetUs_; }
+  uint32_t worstLoopUs() const { return worstLoopUs_; }
+  uint32_t overBudgetCount() const { return overBudgetCount_; }
   // Fases
   virtual void configure() {}
   virtual bool setup() { return true; }
@@ -23,8 +30,14 @@ public:
   unsigned long setupDurationMs() const { return setupDurMs_; }
   unsigned long loopAccumulatedUs() const { return loopAccumUs_; }
   void _setSetupDuration(unsigned long ms){ setupDurMs_=ms; }
-  void _accLoop(unsigned long us){ loopAccumUs_ += us; }
+  void _accLoop(unsigned long us){ loopAccumUs_ += us; if(us>worstLoopUs_) worstLoopUs_=us; if(budgetUs_ && us>budgetUs_) overBudgetCount_++; }
   void _markFailed(){ failedSetup_=true; enabled_=false; }
+  bool _dueToRun(unsigned long nowMs) {
+    if(!periodMs_) return true; // correr cada iteración
+    if(nowMs < lastRunMs_) { lastRunMs_=nowMs; return true; } // wrap
+    return (nowMs - lastRunMs_) >= periodMs_;
+  }
+  void _markRun(unsigned long nowMs){ lastRunMs_=nowMs; }
 private:
   const char* name_;
   std::vector<const char*> deps_;
@@ -32,6 +45,12 @@ private:
   bool failedSetup_ = false;
   unsigned long setupDurMs_ = 0;
   unsigned long loopAccumUs_ = 0;
+  // Scheduling
+  uint32_t periodMs_ = 0; // 0 = cada iteración
+  uint32_t budgetUs_ = 0; // 0 = sin budget
+  uint32_t worstLoopUs_ = 0;
+  uint32_t overBudgetCount_ = 0;
+  unsigned long lastRunMs_ = 0;
 };
 
 class ModuleManager {
@@ -49,11 +68,30 @@ public:
       else LOGI("MOD","Setup %s ok (%lums)", m->name(), m->setupDurationMs());
     }
   }
-  void loopAll(){ for(auto*m:modules_) if(m->enabled()){ auto t0=micros(); m->loop(); m->_accLoop(micros()-t0);} }
+  void loopAll(){
+    unsigned long nowMs = millis();
+    for(auto*m:modules_) {
+      if(!m->enabled()) continue;
+      if(!m->_dueToRun(nowMs)) continue;
+      m->_markRun(nowMs);
+      auto t0=micros();
+      m->loop();
+      auto dur = micros()-t0;
+      m->_accLoop(dur);
+      if(m->loopBudgetUs() && dur>m->loopBudgetUs()*4) { // 4x budget => log fuerte
+        LOGE("MOD","%s loop %luus excede 4x budget %u", m->name(), (unsigned long)dur, m->loopBudgetUs());
+      } else if(m->loopBudgetUs() && dur>m->loopBudgetUs()) {
+        LOGW("MOD","%s loop %luus > budget %u", m->name(), (unsigned long)dur, m->loopBudgetUs());
+      }
+    }
+  }
   void disableModule(const char* name){ for(auto*m:modules_) if(strcmp(m->name(),name)==0) m->setEnabled(false); }
   void dumpStatus(){
     Serial.println("--- MODULE STATUS ---");
-    for(auto*m:modules_){ Serial.printf("%s : %s setup=%lums loop_us=%lu failed=%d\n", m->name(), m->enabled()?"ON":"OFF", m->setupDurationMs(), m->loopAccumulatedUs(), m->failedSetup()); }
+    for(auto*m:modules_){
+      Serial.printf("%s : %s setup=%lums loop_us=%lu worst=%u budget=%u over=%u period=%u failed=%d\n",
+        m->name(), m->enabled()?"ON":"OFF", m->setupDurationMs(), m->loopAccumulatedUs(), m->worstLoopUs(), m->loopBudgetUs(), m->overBudgetCount(), m->periodMs(), m->failedSetup());
+    }
   }
 private:
   bool depsAvailable(Module* m){
