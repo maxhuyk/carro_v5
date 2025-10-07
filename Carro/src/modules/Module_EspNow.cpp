@@ -77,12 +77,12 @@ static void onDataReceived(const uint8_t * mac, const uint8_t *incomingData, int
 static bool initESPNOW(){
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
-  Serial.print("[ESP-NOW] CARRO MAC Address: "); Serial.println(WiFi.macAddress());
-  Serial.println("[ESP-NOW] Copiar esta MAC al TAG en carroMacAddress[]");
-  if(esp_now_init()!=ESP_OK){ Serial.println("[ESP-NOW] Error inicializando ESP-NOW"); return false; }
+  LOGI("ESP","CARRO MAC=%s", WiFi.macAddress().c_str());
+  LOGI("ESP","Copiar esta MAC al TAG (carroMacAddress[])");
+  if(esp_now_init()!=ESP_OK){ LOGE("ESP","Error inicializando ESP-NOW"); return false; }
   esp_now_register_recv_cb(onDataReceived);
-  Serial.println("[ESP-NOW] Inicializado correctamente como receptor");
-  Serial.println("[ESP-NOW] Esperando datos del TAG...");
+  LOGI("ESP","Inicializado como receptor");
+  LOGI("ESP","Esperando datos del TAG...");
   return true;
 }
 

@@ -58,11 +58,11 @@ static void try_anchor_recovery(DW3000Class& D, AnchorState& S, const char* name
     if (!D.checkForIDLE()) {
         S.consecNotIdle++;
         if (S.consecNotIdle >= 2) {
-            Serial.printf("[UWBCore][RECOVERY] %s no IDLE (%u). Soft reinit...\n", name, S.consecNotIdle);
+            LOGW("UWB","[RECOVERY] %s no IDLE (%u). Soft reinit", name, S.consecNotIdle);
             anchor_soft_reinit(D);
             S.softResets++; S.consecNotIdle = 0; delay(100);
             if (!D.checkForIDLE()) {
-                Serial.printf("[UWBCore][RECOVERY] %s sigue no IDLE. Hard reset...\n", name);
+                LOGW("UWB","[RECOVERY] %s sigue no IDLE. Hard reset", name);
                 D.hardReset(); unsigned long t0 = millis();
                 while (!D.checkForIDLE() && (millis()-t0)<1000) delay(50);
                 D.softReset(); delay(200); D.init(); D.setupGPIO(); D.configureAsTX(); D.clearSystemStatus(); S.hardResets++;
@@ -89,11 +89,11 @@ static float dsr_once(DW3000Class& D, uint16_t& failCount, unsigned long rxTimeo
 
 void UWBCore_setup(){
     uwbSemaphore = xSemaphoreCreateBinary(); xSemaphoreGive(uwbSemaphore);
-    Serial.println("[UWBCore] Inicializando anchors con timings optimizados");
-    Serial.println("[UWBCore] Inicializando Anchor 1..."); anchor1.begin(); anchor1.hardReset(); while(!anchor1.checkForIDLE()) delay(200); anchor1.softReset(); delay(200); anchor1.init(); anchor1.setupGPIO(); anchor1.configureAsTX(); anchor1.clearSystemStatus();
-    Serial.println("[UWBCore] Inicializando Anchor 2..."); anchor2.begin(); anchor2.hardReset(); while(!anchor2.checkForIDLE()) delay(200); anchor2.softReset(); delay(200); anchor2.init(); anchor2.setupGPIO(); anchor2.configureAsTX(); anchor2.clearSystemStatus();
-    Serial.println("[UWBCore] Inicializando Anchor 3..."); anchor3.begin(); anchor3.hardReset(); while(!anchor3.checkForIDLE()) delay(200); anchor3.softReset(); delay(200); anchor3.init(); anchor3.setupGPIO(); anchor3.configureAsTX(); anchor3.clearSystemStatus();
-    Serial.println("[UWBCore] Todos los anchors inicializados");
+    LOGI("UWB","Inicializando anchors (timings optimizados)");
+    LOGI("UWB","Inicializando Anchor 1"); anchor1.begin(); anchor1.hardReset(); while(!anchor1.checkForIDLE()) delay(200); anchor1.softReset(); delay(200); anchor1.init(); anchor1.setupGPIO(); anchor1.configureAsTX(); anchor1.clearSystemStatus();
+    LOGI("UWB","Inicializando Anchor 2"); anchor2.begin(); anchor2.hardReset(); while(!anchor2.checkForIDLE()) delay(200); anchor2.softReset(); delay(200); anchor2.init(); anchor2.setupGPIO(); anchor2.configureAsTX(); anchor2.clearSystemStatus();
+    LOGI("UWB","Inicializando Anchor 3"); anchor3.begin(); anchor3.hardReset(); while(!anchor3.checkForIDLE()) delay(200); anchor3.softReset(); delay(200); anchor3.init(); anchor3.setupGPIO(); anchor3.configureAsTX(); anchor3.clearSystemStatus();
+    LOGI("UWB","Todos los anchors inicializados");
 }
 
 void UWBCore_task(void* parameter){
@@ -126,8 +126,8 @@ void UWBCore_task(void* parameter){
 }
 
 void UWBCore_startTask(){
-    Serial.println("[UWBCore] Iniciando tarea UWB en Core 0...");
-    if(xTaskCreatePinnedToCore(UWBCore_task, "UWB_Core_Task", 4096, nullptr, 3, &uwbTaskHandle, 0)!=pdPASS){ Serial.println("[UWBCore] ERROR creando tarea UWB"); }
+    LOGI("UWB","Iniciando tarea UWB en Core 0");
+    if(xTaskCreatePinnedToCore(UWBCore_task, "UWB_Core_Task", 4096, nullptr, 3, &uwbTaskHandle, 0)!=pdPASS){ LOGE("UWB","ERROR creando tarea UWB"); }
 }
 
 bool UWBCore_getRawData(UWBRawData& out){
@@ -151,7 +151,10 @@ bool UWBCore_getRawData(UWBRawData& out){
 }
 
 bool UWBCore_update(){ UWBRawData raw; UWBCore_getRawData(raw); // mantiene interfaz
-    static unsigned long lastDebug=0; if(millis()-lastDebug>3000){ Serial.printf("[UWB] Raw: d1=%.1f(v=%d) d2=%.1f(v=%d) d3=%.1f(v=%d)\n", raw.distance1, raw.valid1, raw.distance2, raw.valid2, raw.distance3, raw.valid3); lastDebug=millis(); }
+    static unsigned long lastDebug=0; if(millis()-lastDebug>3000){
+        lastDebug=millis();
+        LOGD("UWB","Raw d1=%.1f(v=%d) d2=%.1f(v=%d) d3=%.1f(v=%d)", raw.distance1, raw.valid1, raw.distance2, raw.valid2, raw.distance3, raw.valid3);
+    }
     g_distances[0]=raw.distance1; g_distances[1]=raw.distance2; g_distances[2]=raw.distance3; g_anchor_status[0]=raw.valid1; g_anchor_status[1]=raw.valid2; g_anchor_status[2]=raw.valid3; return true; }
 
 void UWBCore_getDistances(float distances[NUM_ANCHORS]){ for(int i=0;i<NUM_ANCHORS;i++) distances[i]=g_distances[i]; }

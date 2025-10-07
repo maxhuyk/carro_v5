@@ -87,9 +87,8 @@ public:
   }
   void disableModule(const char* name){ for(auto*m:modules_) if(strcmp(m->name(),name)==0) m->setEnabled(false); }
   void dumpStatus(){
-    Serial.println("--- MODULE STATUS ---");
     for(auto*m:modules_){
-      Serial.printf("%s : %s setup=%lums loop_us=%lu worst=%u budget=%u over=%u period=%u failed=%d\n",
+      LOGI("MOD","STATUS %s=%s setup=%lums loop_us=%lu worst=%u budget=%u over=%u period=%u failed=%d",
         m->name(), m->enabled()?"ON":"OFF", m->setupDurationMs(), m->loopAccumulatedUs(), m->worstLoopUs(), m->loopBudgetUs(), m->overBudgetCount(), m->periodMs(), m->failedSetup());
     }
   }

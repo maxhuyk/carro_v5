@@ -30,6 +30,9 @@ namespace UwbPipeline {
     return false;
   }
   void recordControlLatency(uint32_t us){ lastLatencyUs=us; if(us>worstLatencyUs) worstLatencyUs=us; latencySamples++; latencyAccumUs+=us; }
-  void dumpStats(){ float avg = latencySamples? (float)latencyAccumUs/latencySamples:0.0f; Serial.println("--- UWB PIPELINE STATS ---"); Serial.printf("produced=%u consumed=%u lastSeq=%u skipped=%u lastLat=%u worst=%u avg=%.1f\n", produced, consumed, lastSeq, skippedSeq, lastLatencyUs, worstLatencyUs, avg); }
+  void dumpStats(){
+    float avg = latencySamples? (float)latencyAccumUs/latencySamples:0.0f;
+    LOGI("UWBQ","PIPE stats prod=%u cons=%u last=%u skip=%u lastLat=%u worst=%u avg=%.1f", produced, consumed, lastSeq, skippedSeq, lastLatencyUs, worstLatencyUs, avg);
+  }
   void resetStats(){ produced=consumed=skippedSeq=worstLatencyUs=lastLatencyUs=latencySamples=latencyAccumUs=0; }
 }
