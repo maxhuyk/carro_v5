@@ -4,6 +4,7 @@
 #include "motor/MotorController.h"
 #include "control/ControlCore.h"
 #include "config/Config.h"
+#include "modules/Module_EspNow.h" // para EspNow_getState
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -16,14 +17,29 @@ static void ControlTask(void* arg){
   while(true){
     unsigned long c = UWBCore_getMeasurementCount();
     if(c != lastCount){
-      // Obtener raw (aunque anchor inválido, igual corremos)
+      unsigned long tControlStartUs = micros();
       if(UWBCore_getRawData(raw)){
-        // Convertir a mm (raw.distanceX está en cm?) Asumimos cm->mm multiplicando por 10 si venía en cm.
-        data.distancias[0] = raw.distance1 * 10.0f;
-        data.distancias[1] = raw.distance2 * 10.0f;
-        data.distancias[2] = raw.distance3 * 10.0f;
-        data.data_valid = true; // Incluso si alguna inválida, mantenemos true (ajuste futuro si se necesita)
+        // Distancias: convertimos a mm si no son NAN
+        data.distancias[0] = (isnan(raw.distance1)? -1.0f : raw.distance1 * 10.0f);
+        data.distancias[1] = (isnan(raw.distance2)? -1.0f : raw.distance2 * 10.0f);
+        data.distancias[2] = (isnan(raw.distance3)? -1.0f : raw.distance3 * 10.0f);
+        // Integrar estado ESP-NOW
+        auto &st = EspNow_getState();
+        data.control_data[0] = st.battery_mV / 1000.0f; // battery voltage en volts
+        data.control_data[1] = st.modo;                 // modo
+        data.buttons_data[2] = st.manualVelL;           // manual izquierda
+        data.buttons_data[3] = st.manualVelR;           // manual derecha
+        // Decidir data_valid: ejecutamos siempre (true) para que la lógica de seguridad actúe internamente
+        data.data_valid = true; // si quisieras condicionar: (st.valid || true)
+        // Ejecutar control
         ControlCore_run(data);
+        // Latencia UWB->Control (timestamp raw en ms vs ahora)
+        static unsigned long lastLatLog=0; unsigned long nowMs=millis();
+        if(nowMs - lastLatLog > 5000){
+          unsigned long ageMs = (nowMs > raw.timestamp)? (nowMs - raw.timestamp) : 0;
+          LOGD("CTRL","Latencia UWB->Control=%lums seq=%lu", ageMs, c);
+          lastLatLog = nowMs;
+        }
       }
       lastCount = c;
     }
