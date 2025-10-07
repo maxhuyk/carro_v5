@@ -56,11 +56,13 @@
 
 // Velocidades y aceleraciones
 #define VELOCIDAD_MAXIMA 75
+#define VELOCIDAD_MANUAL 40
 #define ACELERACION_MAXIMA 10
 #define DESACELERACION_MAXIMA 35
 
-// Control manual
-#define VELOCIDAD_MANUAL 40
+// Velocidad máxima en modo emergencia (escala 0..100 usada por motor_enviar_pwm)
+#define EMERGENCY_MAX_SPEED 25
+
 
 // Movimiento sin señal
 #define DISTANCIA_FALLBACK 2500
