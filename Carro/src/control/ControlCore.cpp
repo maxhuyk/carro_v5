@@ -17,7 +17,7 @@
 // ===== Estado global migrado literal (A-E) =====
 static bool control_initialized = false;
 static PIDController pid_ang;              // pid angular (pid original 'pid')
-static PIDController pid_dist;             // pid distancia (pid_distancia)
+// Eliminado PID de distancia; se usa perfil proporcional directo
 static float distancias_previas[3] = {0,0,0};
 static bool dist_prev_valid = false;
 static float angulo_anterior = 0;
@@ -56,7 +56,6 @@ void ControlCore_init(){
   kalman_init(3, KALMAN_Q, KALMAN_R);
   // Gains literales (ojo: en CarroClean pid angular estaba hardcodeado a 1.2/0.01/0.3, pero ahora usamos los defines configurables)
   pid_init(&pid_ang, PID_KP, PID_KI, PID_KD, PID_SETPOINT, PID_ALPHA, PID_SALIDA_MAX, INTEGRAL_MAX);
-  pid_init(&pid_dist, PID_DISTANCIA_KP, PID_DISTANCIA_KI, PID_DISTANCIA_KD, DISTANCIA_OBJETIVO, PID_DISTANCIA_ALPHA, VELOCIDAD_MAXIMA, PID_DISTANCIA_INTEGRAL_MAX);
   dist_prev_valid = false;
   angulo_anterior = 0;
   velocidad_actual = 0;
@@ -260,9 +259,8 @@ void ControlCore_run(const CarroData& data){
   }
 
   // ###########################################################
-  // PASO 9: PID DISTANCIA + perfil de velocidad progresivo
+  // PASO 9: Perfil de velocidad progresivo (sin PID de distancia)
   // ###########################################################
-  float velocidad_pid = pid_update(&pid_dist, distancia_al_tag); (void)velocidad_pid;
   float error_distancia = distancia_al_tag - DISTANCIA_OBJETIVO;
   int velocidad_objetivo;
   if(error_distancia > 5000) velocidad_objetivo = VELOCIDAD_MAXIMA;
@@ -277,7 +275,7 @@ void ControlCore_run(const CarroData& data){
   }
   velocidad_actual = suavizar_velocidad_avanzada(velocidad_actual, (float)velocidad_objetivo, ACELERACION_MAXIMA, DESACELERACION_MAXIMA);
   int velocidad_avance = (int)velocidad_actual;
-  LOGD("CTRL","DIST %.1f OBJ %.1f ERR %.1f vObj %d vSuav %d", distancia_al_tag, (float)DISTANCIA_OBJETIVO, error_distancia, velocidad_objetivo, velocidad_avance);
+  LOGD("CTRL","DIST %.1f OBJ %.1f ERR %.1f vObj %d vSuav %d (sin PID dist)", distancia_al_tag, (float)DISTANCIA_OBJETIVO, error_distancia, velocidad_objetivo, velocidad_avance);
 
   // ###########################################################
   // PASO 10: Control diferencial y envío de PWM

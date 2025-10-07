@@ -51,13 +51,8 @@
 #define PID_SALIDA_MAX 10.0
 #define INTEGRAL_MAX 20.0
 
-// Control distancia
+// Control distancia (objetivo usado para perfil lineal)
 #define DISTANCIA_OBJETIVO 1500.0
-#define PID_DISTANCIA_KP 0.3
-#define PID_DISTANCIA_KI 0.05
-#define PID_DISTANCIA_KD 0.15
-#define PID_DISTANCIA_ALPHA 0.5
-#define PID_DISTANCIA_INTEGRAL_MAX 100.0
 
 // Velocidades y aceleraciones
 #define VELOCIDAD_MAXIMA 75
