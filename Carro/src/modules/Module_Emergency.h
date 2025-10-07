@@ -17,8 +17,9 @@ public:
   void configure() override {
     pin_ = 36;
     // Umbral de activación: 0.9V ~ raw = 4095 * 0.9/3.3 ≈ 1116 -> uso 1100 para histéresis leve
-    activateThreshold_ = 900;
-    releaseThreshold_ = 700; // para evitar flapping, se libera un poco más abajo
+    activateThreshold_ = 900;      // activar emergencia
+    releaseThreshold_ = 700;       // liberar emergencia
+    deadzoneRaw_ = EMERGENCY_DEADZONE_RAW; // margen sin movimiento inicial
   }
   bool setup() override {
     pinMode(pin_, INPUT);
@@ -42,28 +43,34 @@ public:
       }
     }
     if(active_){
-      // Clampear rango mínimo para evitar ruido por debajo de releaseThreshold
-      int clamped = raw; if(clamped < releaseThreshold_) clamped = releaseThreshold_;
+      // Región muerta adicional: raw < (releaseThreshold_ + deadzoneRaw_) => pwm=0
+      int startMap = releaseThreshold_ + deadzoneRaw_;
+      if(startMap > 4095) startMap = 4095; // seguridad
+      int clamped = raw;
+      if(clamped < startMap) clamped = startMap; // asegura 0 en deadzone
       if(clamped > 4095) clamped = 4095;
-      // Mapear [releaseThreshold_..4095] -> [0..EMERGENCY_MAX_SPEED]
-      int spanIn = 4095 - releaseThreshold_;
-      int spanRaw = clamped - releaseThreshold_;
-      float ratio = spanIn>0 ? (float)spanRaw / (float)spanIn : 0.0f;
+      int spanIn = 4095 - startMap;
+      int spanRaw = clamped - startMap;
+      float ratio = spanIn>0 ? (float)spanRaw / (float)spanIn : 0.0f; // 0..1
       if(ratio < 0) ratio = 0; if(ratio>1) ratio=1;
-      int pwm = (int)lroundf(ratio * EMERGENCY_MAX_SPEED);
-      // Enviar misma velocidad adelante (modo override total)
-      motor_enviar_pwm(pwm, pwm);
+  int pwm = (int)lroundf(ratio * EMERGENCY_MAX_SPEED);
+  // Deadzone extendida: si raw < startMap => 0
+  if(raw < startMap) pwm = 0;
+  // Aplicar umbral mínimo de comando para anular valores residuales muy bajos
+  if(pwm < EMERGENCY_MIN_COMMAND) pwm = 0;
+  motor_enviar_pwm(pwm, pwm);
       if(now - lastLogMs_ > 500){
         lastLogMs_ = now;
-        LOGD("EMERG","raw=%d pwm=%d ratio=%.2f", raw, pwm, ratio);
+        LOGD("EMERG","raw=%d start=%d pwm=%d ratio=%.2f minCmd=%d", raw, startMap, pwm, ratio, EMERGENCY_MIN_COMMAND);
       }
     }
   }
   bool isActive() const { return active_; }
 private:
   int pin_=36;
-  int activateThreshold_=1100;
-  int releaseThreshold_=1000;
+  int activateThreshold_=900;
+  int releaseThreshold_=700;
+  int deadzoneRaw_=EMERGENCY_DEADZONE_RAW;
   bool active_=false;
   unsigned long lastChangeMs_=0;
   unsigned long lastLogMs_=0;

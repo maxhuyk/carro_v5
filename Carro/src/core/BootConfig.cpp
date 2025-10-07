@@ -2,6 +2,7 @@
 #include "core/ConfigStore.h"
 #include "core/Module.h"
 #include "core/Log.h"
+#include "config/Config.h" // para CONFIG_LOG_LEVEL_DEFAULT
 
 namespace BootConfig {
 
@@ -12,7 +13,22 @@ void applyDefaults(){
   cfg.set("enable.EspNow","true");
   cfg.set("enable.Motor","true");
   cfg.set("enable.Emergency","true");
+
+  // Mapear CONFIG_LOG_LEVEL_DEFAULT numérico a string runtime
+  // 0=TRACE 1=DEBUG 2=INFO 3=WARN 4=ERROR (otros -> info)
+#if   CONFIG_LOG_LEVEL_DEFAULT == 0
+  cfg.set("log.level","trace");
+#elif CONFIG_LOG_LEVEL_DEFAULT == 1
   cfg.set("log.level","debug");
+#elif CONFIG_LOG_LEVEL_DEFAULT == 2
+  cfg.set("log.level","info");
+#elif CONFIG_LOG_LEVEL_DEFAULT == 3
+  cfg.set("log.level","warn");
+#elif CONFIG_LOG_LEVEL_DEFAULT == 4
+  cfg.set("log.level","error");
+#else
+  cfg.set("log.level","info");
+#endif
 }
 
 void applyModuleEnables(){

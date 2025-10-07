@@ -62,6 +62,11 @@
 
 // Velocidad máxima en modo emergencia (escala 0..100 usada por motor_enviar_pwm)
 #define EMERGENCY_MAX_SPEED 25
+// Margen muerto adicional dentro del modo emergencia para evitar movimiento con pot al mínimo
+// Valor en unidades RAW ADC (0..4095). Debe ser >0. Ej: 120 ~ ~0.1V aprox.
+#define EMERGENCY_DEADZONE_RAW 60
+// Umbral mínimo (0..100) debajo del cual NO se envía ningún comando (evita que 1..4% activen el torque mínimo)
+#define EMERGENCY_MIN_COMMAND 3
 
 
 // Movimiento sin señal
